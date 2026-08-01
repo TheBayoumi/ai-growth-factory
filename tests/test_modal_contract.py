@@ -22,7 +22,9 @@ class ModalContractTests(unittest.TestCase):
             'modal.Cron("0 10 * * *", timezone="Africa/Cairo")',
             '"REVIEWER_BACKEND": "qwen_omni"',
             '"YOUTUBE_PRIVACY_STATUS": "private"',
-            '"PUBLISH_ENABLED": "true"',
+            '"PUBLISH_ENABLED": "false"',
+            'def render_production_canary()',
+            'MODAL_USE_FACTORY_SECRET',
         )
         for token in required:
             with self.subTest(token=token):

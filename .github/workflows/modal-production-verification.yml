@@ -1,0 +1,140 @@
+name: Modal GPU Production Verification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: modal-gpu-production-verification
+  cancel-in-progress: false
+
+jobs:
+  authorize-deploy-canary:
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
+
+      - name: Install and verify source
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . coverage "modal==1.5.3"
+          python -m compileall -q factory cloud tests
+          python -m unittest discover -s tests -v
+          python scripts/repository_preflight.py
+
+      - name: Authorize Modal in browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Open the Modal URL printed below and complete the account authorization."
+          stdbuf -oL -eL python -m modal token new \
+            --profile github-production-verification \
+            --source github-actions \
+            --no-verify
+
+      - name: Deploy T4 production worker
+        env:
+          MODAL_USE_FACTORY_SECRET: "false"
+        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
+
+      - name: Run real render-only production canary
+        id: canary
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-canary-result.txt
+          code=${PIPESTATUS[0]}
+          echo "$code" > modal-canary-exit-code.txt
+          exit 0
+
+      - name: Resolve canary artifact identifier
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          text = Path("modal-canary-result.txt").read_text(encoding="utf-8", errors="replace")
+          candidates = []
+          for line in text.splitlines():
+              stripped = line.strip()
+              if stripped.startswith("{") and stripped.endswith("}"):
+                  try:
+                      candidates.append(json.loads(stripped))
+                  except json.JSONDecodeError:
+                      pass
+          if candidates:
+              result = candidates[-1]
+              canary_id = str(result.get("canary_id") or "")
+          else:
+              matches = re.findall(r'"canary_id"\s*:\s*"([^"]+)"', text)
+              canary_id = matches[-1] if matches else ""
+          if not canary_id:
+              raise SystemExit("Could not resolve canary_id from Modal output")
+          Path("canary-id.txt").write_text(canary_id, encoding="utf-8")
+          print(canary_id)
+          PY
+
+      - name: Download exact GPU output bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          canary_id=$(cat canary-id.txt)
+          modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary
+
+      - name: Upload production canary artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modal-production-canary
+          path: |
+            production-canary/
+            modal-canary-result.txt
+            modal-canary-exit-code.txt
+            canary-id.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce canary success
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat modal-canary-exit-code.txt)" = "0"
+          test -f production-canary/canary-result.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          result = json.loads(Path("production-canary/canary-result.json").read_text(encoding="utf-8"))
+          if result.get("status") != "verified_render_canary":
+              raise SystemExit(f"Canary was not verified: {result}")
+          if not (Path("production-canary") / "video.mp4").exists():
+              raise SystemExit("Canary video is missing")
+          if not (Path("production-canary") / "narration.wav").exists():
+              raise SystemExit("Canary narration is missing")
+          print(json.dumps(result, indent=2, ensure_ascii=False))
+          PY
