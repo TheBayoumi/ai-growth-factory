@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'modal-gpu-production-verification-v4' || format('modal-gpu-nonverification-{0}', github.run_id) }}
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'modal-gpu-production-verification-v5' || format('modal-gpu-nonverification-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -54,6 +54,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . "modal==1.5.3"
           python -m compileall -q factory cloud
+          python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
           python scripts/repository_preflight.py
 
       - name: Verify Modal credential pair
@@ -140,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
-            failure=$(find production-video -name canary-failure.json -type f -print -quit)
+            failure=$(find production-video -name canary-failure.json -type f -print -quit 2>/dev/null || true)
             if [ -n "${failure}" ]; then
               cat "${failure}"
             fi
