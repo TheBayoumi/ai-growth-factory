@@ -42,21 +42,26 @@ worker_image = (
         "optimum==2.2.0",
         "qwen-omni-utils[decord]>=0.0.8",
     )
-    # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
-    # it can see the CUDA-enabled torch installation from the previous image layer.
-    # gptqmodel may also upgrade NumPy transitively, so the final runtime layer pins
-    # the newest Numba-supported NumPy 2.4 release before importing Qwen TTS.
+    # GPTQModel needs the CUDA Torch layer during installation. Version 5.8.0
+    # exposes the METHOD API required by the Hugging Face GPTQ integration and
+    # includes the Qwen Omni / older-and-newer Transformers compatibility work.
     .run_commands(
-        "python -m pip install --no-build-isolation gptqmodel==2.0.0",
-        "python -m pip install --force-reinstall numpy==2.4.6 numba==0.64.0",
+        "python -m pip install --no-build-isolation gptqmodel==5.8.0",
+        (
+            "python -m pip install --force-reinstall "
+            "numpy==2.4.6 numba==0.64.0 transformers==4.57.3 optimum==2.2.0"
+        ),
         (
             "python -c \"from importlib.metadata import version; "
             "import decord, numba, numpy, torch, torchvision; "
+            "from gptqmodel.quantization import METHOD; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, "
             "Qwen2_5OmniProcessor; "
             "from transformers.utils import is_optimum_available; "
+            "assert version('gptqmodel') == '5.8.0', version('gptqmodel'); "
+            "assert hasattr(METHOD, 'GPTQ'), METHOD; "
             "assert version('optimum') == '2.2.0', version('optimum'); "
             "assert is_optimum_available(), 'Transformers cannot detect Optimum'; "
             "assert numpy.__version__ == '2.4.6', numpy.__version__; "
@@ -98,8 +103,6 @@ worker_image = (
     .add_local_python_source("factory")
 )
 
-# Verification deployments do not require account secrets. Production publishing
-# opts into the named secret by setting MODAL_USE_FACTORY_SECRET=true at deploy time.
 factory_secrets = (
     [modal.Secret.from_name("ai-growth-factory-secrets")]
     if os.getenv("MODAL_USE_FACTORY_SECRET", "").strip().lower() == "true"
@@ -134,6 +137,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
         import torchaudio
         import torchvision
         import transformers
+        from gptqmodel.quantization import METHOD
         from qwen_tts import Qwen3TTSModel
         from qwen_omni_utils import process_mm_info
         from transformers import (
@@ -142,14 +146,17 @@ def reviewer_runtime_probe() -> dict[str, object]:
         )
         from transformers.utils import is_optimum_available
 
-        if numpy.__version__ != "2.4.6":
-            raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
-        if numba.__version__ != "0.64.0":
-            raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
-        if package_version("optimum") != "2.2.0":
-            raise RuntimeError(
-                f"Unexpected Optimum version: {package_version('optimum')}"
-            )
+        expected_versions = {
+            "numpy": (numpy.__version__, "2.4.6"),
+            "numba": (numba.__version__, "0.64.0"),
+            "optimum": (package_version("optimum"), "2.2.0"),
+            "gptqmodel": (package_version("gptqmodel"), "5.8.0"),
+        }
+        for name, (actual, expected) in expected_versions.items():
+            if actual != expected:
+                raise RuntimeError(f"Unexpected {name} version: {actual}; expected {expected}")
+        if not hasattr(METHOD, "GPTQ"):
+            raise RuntimeError("GPTQModel does not expose METHOD.GPTQ")
         if not is_optimum_available():
             raise RuntimeError("Transformers cannot detect the Optimum installation")
 
@@ -174,14 +181,12 @@ def reviewer_runtime_probe() -> dict[str, object]:
                 "torchvision": str(torchvision.__version__),
                 "transformers": str(transformers.__version__),
                 "optimum": str(package_version("optimum")),
+                "gptqmodel": str(package_version("gptqmodel")),
                 "numpy": str(numpy.__version__),
                 "numba": str(numba.__version__),
                 "decord": str(decord.__version__),
             },
         }
-        # Modal serializes return values for the local GitHub runner. Round-trip
-        # through JSON so framework-specific objects such as torch.torch_version.TorchVersion
-        # can never require Torch during local deserialization.
         return json.loads(json.dumps(probe, default=str))
     except Exception as exc:
         raise RuntimeError(
@@ -203,7 +208,6 @@ def reviewer_runtime_probe() -> dict[str, object]:
     schedule=modal.Cron("0 10 * * *", timezone="Africa/Cairo"),
 )
 def daily_factory() -> dict[str, object]:
-    """Run one private-first autonomous publication each day when secrets enable it."""
     _prepare_runtime()
     from factory.config import Settings
     from factory.pipeline import run_factory
@@ -225,7 +229,6 @@ def daily_factory() -> dict[str, object]:
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def render_production_canary() -> dict[str, object]:
-    """Run the real generation/review/render stack and export artifacts without publishing."""
     _prepare_runtime()
     os.environ["PUBLISH_ENABLED"] = "false"
     from factory.canary import run_production_canary
@@ -250,7 +253,6 @@ def render_production_canary() -> dict[str, object]:
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def run_canary() -> dict[str, object]:
-    """Run the publication path with private visibility after owner credentials exist."""
     _prepare_runtime()
     os.environ["YOUTUBE_PRIVACY_STATUS"] = "private"
     from factory.config import Settings
