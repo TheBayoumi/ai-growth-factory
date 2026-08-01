@@ -44,10 +44,10 @@ worker_image = (
     )
     # GPTQModel's build metadata imports Torch. Disable PEP 517 build isolation so
     # it can see the CUDA-enabled Torch installation from the previous image layer.
-    # GPTQModel 5 is the first checked stable release exporting the METHOD API used
-    # by Optimum 2.2 while matching Torch 2.8 and Transformers 4.57.
+    # GPTQModel 5.7 exports the METHOD API required by Optimum 2.2 and explicitly
+    # supports Python 3.12, Torch 2.8, Transformers 4.57, and NumPy 2.2.6.
     .run_commands(
-        "python -m pip install --no-build-isolation gptqmodel==5.0.0",
+        "python -m pip install --no-build-isolation gptqmodel==5.7.0",
         "python -m pip install --force-reinstall numpy==2.2.6 numba==0.64.0",
         (
             "python -c \"from importlib.metadata import version; "
@@ -61,7 +61,7 @@ worker_image = (
             "from transformers.quantizers.quantizer_gptq import GptqHfQuantizer; "
             "from transformers.utils import is_optimum_available; "
             "from transformers.utils.quantization_config import GPTQConfig; "
-            "assert version('gptqmodel') == '5.0.0', version('gptqmodel'); "
+            "assert version('gptqmodel') == '5.7.0', version('gptqmodel'); "
             "assert version('optimum') == '2.2.0', version('optimum'); "
             "assert is_optimum_available(), 'Transformers cannot detect Optimum'; "
             "assert METHOD.GPTQ is not None; "
@@ -158,7 +158,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
         if numba.__version__ != "0.64.0":
             raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
-        if package_version("gptqmodel") != "5.0.0":
+        if package_version("gptqmodel") != "5.7.0":
             raise RuntimeError(
                 f"Unexpected GPTQModel version: {package_version('gptqmodel')}"
             )
