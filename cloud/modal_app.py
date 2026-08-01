@@ -29,7 +29,7 @@ worker_image = (
     )
     .pip_install(
         "requests==2.32.5",
-        "Pillow==11.3.1",
+        "Pillow==11.3.0",
         "imageio-ffmpeg==0.6.0",
         "qwen-tts==0.1.1",
         "qwen-omni-utils>=0.0.8",
