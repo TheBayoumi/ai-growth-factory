@@ -47,14 +47,11 @@ PACKAGE_SCHEMA: dict[str, Any] = {
 }
 
 
-PACKAGE_REQUIRED_KEYS = {
+PACKAGE_CORE_REQUIRED_KEYS = {
     "topic",
     "narration",
     "title",
     "description",
-    "tags",
-    "thumbnail_text",
-    "top_comment",
     "source_urls",
     "source_publishers",
     "scenes",
@@ -70,6 +67,31 @@ EVIDENCE_SAFE_CLOSES = (
     "That separates an interesting release from a dependable production tool.",
     "The evidence should decide the next step, not the headline.",
 )
+
+DEFAULT_DISCOVERY_TAGS = (
+    "AI",
+    "Artificial Intelligence",
+    "AI News",
+    "AI Engineering",
+    "Machine Learning",
+    "AI Tools",
+    "Technology",
+    "AI Update",
+)
+
+THUMBNAIL_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "for",
+    "from",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
+}
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -195,6 +217,75 @@ def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
     return corrected
 
 
+def _deduplicated_nonempty_strings(values: Any, *, limit: int, max_length: int) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()[:max_length]
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        result.append(text)
+        seen.add(key)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _topic_tag_candidates(raw: dict[str, Any]) -> list[str]:
+    seed = f"{raw.get('topic', '')} {raw.get('title', '')}"
+    words = re.findall(r"[A-Za-z][A-Za-z0-9+#.-]{1,31}", seed)
+    return [word for word in words if word.casefold() not in THUMBNAIL_STOP_WORDS]
+
+
+def _derive_thumbnail_text(raw: dict[str, Any]) -> str:
+    existing = str(raw.get("thumbnail_text") or "").strip()
+    existing_words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#'.-]*", existing)
+    if 2 <= len(existing_words) <= 5:
+        return " ".join(existing_words).upper()[:45]
+
+    seed = str(raw.get("title") or raw.get("topic") or "AI Update")
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#'.-]*", seed)
+    significant = [word for word in words if word.casefold() not in THUMBNAIL_STOP_WORDS]
+    selected = (significant or words)[:5]
+    if len(selected) < 2:
+        selected = (selected + ["AI", "UPDATE"])[:2]
+    return " ".join(selected).upper()[:45]
+
+
+def _complete_display_metadata(raw: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Fill non-factual discovery metadata deterministically without altering claims."""
+    corrected = dict(raw)
+
+    tags = _deduplicated_nonempty_strings(corrected.get("tags"), limit=14, max_length=40)
+    seen = {tag.casefold() for tag in tags}
+    for candidate in (*_topic_tag_candidates(corrected), *DEFAULT_DISCOVERY_TAGS):
+        text = candidate.strip()[:40]
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        tags.append(text)
+        seen.add(key)
+        if len(tags) >= 8:
+            break
+    corrected["tags"] = tags[:14]
+
+    corrected["thumbnail_text"] = _derive_thumbnail_text(corrected)
+
+    top_comment = str(corrected.get("top_comment") or "").strip()
+    if not top_comment:
+        top_comment = "What would you test first?"
+        if settings.monetization_url:
+            label = settings.monetization_label.strip() or "Learn more"
+            top_comment += f" {label}: {settings.monetization_url}"
+        else:
+            top_comment += " Subscribe for evidence-backed AI updates."
+    corrected["top_comment"] = top_comment
+    return corrected
+
+
 def _balanced_source_candidates(
     sources: list[SourceItem],
     *,
@@ -244,9 +335,9 @@ def _publisher_source_table(
         if key not in grouped:
             grouped[key] = {"publisher": publisher, "sources": []}
             order.append(key)
-        sources = grouped[key]["sources"]
-        if len(sources) < urls_per_publisher:
-            sources.append(
+        grouped_sources = grouped[key]["sources"]
+        if len(grouped_sources) < urls_per_publisher:
+            grouped_sources.append(
                 {
                     "source_id": item.get("source_id"),
                     "title": str(item.get("title") or ""),
@@ -354,9 +445,11 @@ def _package_from_raw(
     if raw.get("skip_reason"):
         raise LocalLLMError(f"No publishable trend: {raw['skip_reason']}")
 
-    missing = PACKAGE_REQUIRED_KEYS - set(raw)
+    missing = PACKAGE_CORE_REQUIRED_KEYS - set(raw)
     if missing:
         raise LocalLLMError("Package missing keys: " + ", ".join(sorted(missing)))
+
+    raw = _complete_display_metadata(raw, settings)
 
     source_urls = [str(value) for value in raw["source_urls"]]
     source_publishers = [str(value) for value in raw["source_publishers"]]
