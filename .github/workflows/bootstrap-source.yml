@@ -23,6 +23,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cat source.zip.b64.part-* > source.zip.b64
           base64 --decode source.zip.b64 > source.zip
           echo "7fe85e12b57d1ab6dbf2c7dcffd079e57185001918a0a4bfbd0a82e0c0b0e4e6  source.zip" | sha256sum --check --strict
       - name: Replace repository tree
@@ -33,7 +34,7 @@ jobs:
           mkdir extracted
           unzip -q source.zip -d extracted
           rsync -a --delete --exclude='.git/' extracted/ ./
-          rm -rf extracted source.zip source.zip.b64 source.ready
+          rm -rf extracted source.zip source.zip.b64 source.zip.b64.part-* source.ready
       - name: Commit production source
         shell: bash
         run: |
