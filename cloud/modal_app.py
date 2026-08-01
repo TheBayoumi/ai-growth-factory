@@ -34,7 +34,7 @@ worker_image = (
         "requests==2.32.5",
         "Pillow==11.3.0",
         "imageio-ffmpeg==0.6.0",
-        "numpy==2.4.6",
+        "numpy==2.2.6",
         "soundfile>=0.12,<0.14",
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
@@ -42,26 +42,29 @@ worker_image = (
         "optimum==2.2.0",
         "qwen-omni-utils[decord]>=0.0.8",
     )
-    # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
+    # GPTQModel's build metadata imports torch. Disable PEP 517 build isolation so
     # it can see the CUDA-enabled torch installation from the previous image layer.
-    # gptqmodel may also upgrade NumPy transitively, so the final runtime layer pins
-    # the newest Numba-supported NumPy 2.4 release before importing Qwen TTS.
+    # Version 5.7.0 is the integration-compatible line for Transformers 4.57.x and
+    # exports the METHOD API consumed by Optimum's GPTQ loader.
     .run_commands(
-        "python -m pip install --no-build-isolation gptqmodel==2.0.0",
-        "python -m pip install --force-reinstall numpy==2.4.6 numba==0.64.0",
+        "python -m pip install --no-build-isolation gptqmodel==5.7.0",
+        "python -m pip install --force-reinstall numpy==2.2.6 numba==0.64.0",
         (
             "python -c \"from importlib.metadata import version; "
             "import decord, numba, numpy, torch, torchvision; "
+            "from gptqmodel.quantization import METHOD; "
+            "from optimum.gptq import GPTQQuantizer; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, "
             "Qwen2_5OmniProcessor; "
             "from transformers.utils import is_optimum_available; "
+            "assert version('gptqmodel') == '5.7.0', version('gptqmodel'); "
             "assert version('optimum') == '2.2.0', version('optimum'); "
             "assert is_optimum_available(), 'Transformers cannot detect Optimum'; "
-            "assert numpy.__version__ == '2.4.6', numpy.__version__; "
+            "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "print('Qwen TTS and GPTQ Omni runtime preflight passed')\""
+            "print('Qwen TTS and Optimum GPTQ integration preflight passed')\""
         ),
     )
     .env(
@@ -134,6 +137,8 @@ def reviewer_runtime_probe() -> dict[str, object]:
         import torchaudio
         import torchvision
         import transformers
+        from gptqmodel.quantization import METHOD
+        from optimum.gptq import GPTQQuantizer
         from qwen_tts import Qwen3TTSModel
         from qwen_omni_utils import process_mm_info
         from transformers import (
@@ -142,10 +147,14 @@ def reviewer_runtime_probe() -> dict[str, object]:
         )
         from transformers.utils import is_optimum_available
 
-        if numpy.__version__ != "2.4.6":
+        if numpy.__version__ != "2.2.6":
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
         if numba.__version__ != "0.64.0":
             raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
+        if package_version("gptqmodel") != "5.7.0":
+            raise RuntimeError(
+                f"Unexpected GPTQModel version: {package_version('gptqmodel')}"
+            )
         if package_version("optimum") != "2.2.0":
             raise RuntimeError(
                 f"Unexpected Optimum version: {package_version('optimum')}"
@@ -153,6 +162,8 @@ def reviewer_runtime_probe() -> dict[str, object]:
         if not is_optimum_available():
             raise RuntimeError("Transformers cannot detect the Optimum installation")
 
+        del METHOD
+        del GPTQQuantizer
         del Qwen3TTSModel
         del process_mm_info
         del Qwen2_5OmniForConditionalGeneration
@@ -173,6 +184,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
                 "torchaudio": str(torchaudio.__version__),
                 "torchvision": str(torchvision.__version__),
                 "transformers": str(transformers.__version__),
+                "gptqmodel": str(package_version("gptqmodel")),
                 "optimum": str(package_version("optimum")),
                 "numpy": str(numpy.__version__),
                 "numba": str(numba.__version__),
@@ -180,8 +192,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
             },
         }
         # Modal serializes return values for the local GitHub runner. Round-trip
-        # through JSON so framework-specific objects such as torch.torch_version.TorchVersion
-        # can never require Torch during local deserialization.
+        # through JSON so framework-specific objects can never leak to the client.
         return json.loads(json.dumps(probe, default=str))
     except Exception as exc:
         raise RuntimeError(
