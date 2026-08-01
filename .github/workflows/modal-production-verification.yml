@@ -10,7 +10,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: modal-gpu-production-verification
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'modal-gpu-production-verification-v2' || format('modal-gpu-nonverification-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
