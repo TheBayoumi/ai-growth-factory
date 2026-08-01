@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -243,24 +243,30 @@ SELECTED EVIDENCE:
 
 
 def _strict_scene_indices(
-    scenes_raw: list[dict[str, Any]],
-    source_count: int,
-) -> list[dict[str, Any]]:
-    """Preserve model integers exactly; validation occurs in _package_from_raw."""
-    del source_count
+    scenes_raw: list[Any],
+    source_urls: list[str],
+    sources: list[SourceItem],
+) -> list[int]:
+    """Preserve integer mappings exactly; never infer one-based or catalog indices."""
+    del source_urls, sources
+    indices: list[int] = []
     for scene in scenes_raw:
-        value = scene.get("source_index")
+        if not isinstance(scene, dict) or "source_index" not in scene:
+            raise local_llm.LocalLLMError(
+                "Every scene requires an integer source_index"
+            )
+        value = scene["source_index"]
         if isinstance(value, bool):
             raise local_llm.LocalLLMError(
                 "Every scene requires an integer source_index"
             )
         try:
-            int(value)
+            indices.append(int(value))
         except (TypeError, ValueError) as exc:
             raise local_llm.LocalLLMError(
                 "Every scene requires an integer source_index"
             ) from exc
-    return scenes_raw
+    return indices
 
 
 def _copy_with_indices(raw: dict[str, Any], indices: list[int]) -> dict[str, Any]:
@@ -291,30 +297,22 @@ def generate_package(
     sources: list[SourceItem],
     strategy: Strategy,
 ) -> VideoPackage:
-    """Generate a package with strict integers and exact-URL attribution repair.
-
-    Production callers use this wrapper instead of local_llm.generate_package. It
-    intercepts complete package validation so local_llm cannot reinterpret an
-    all-nonzero zero-based mapping as one-based. Invalid attribution is repaired
-    only with exact URLs from the package's already validated evidence set.
-    """
+    """Generate a package with strict integer and exact-URL attribution handling."""
     with _GENERATION_LOCK:
-        original_package_from_raw: Callable[..., VideoPackage] = local_llm._package_from_raw
+        original_package_from_raw = local_llm._package_from_raw
         original_normalizer = local_llm._normalize_scene_source_indices
 
         def package_with_exact_attribution(
-            raw: dict[str, Any],
             package_settings: Settings,
             package_sources: list[SourceItem],
-            package_strategy: Strategy,
+            raw: dict[str, Any],
         ) -> VideoPackage:
             local_llm._normalize_scene_source_indices = _strict_scene_indices
             try:
                 return original_package_from_raw(
-                    raw,
                     package_settings,
                     package_sources,
-                    package_strategy,
+                    raw,
                 )
             except local_llm.LocalLLMError as exc:
                 if not _is_scene_index_failure(exc):
@@ -331,10 +329,9 @@ def generate_package(
                 )
                 repaired = _copy_with_indices(raw, indices)
                 return original_package_from_raw(
-                    repaired,
                     package_settings,
                     package_sources,
-                    package_strategy,
+                    repaired,
                 )
 
         local_llm._package_from_raw = package_with_exact_attribution
