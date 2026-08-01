@@ -7,4 +7,4 @@ Local validation:
 - Temporal hold-jump rejection passed.
 - Credential/media repository preflight passed.
 
-Repository CI repeats verification only after a pull request merges into main.
+Repository CI is configured on the pull_request closed event and runs only when that pull request was merged into main.
