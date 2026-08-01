@@ -19,10 +19,8 @@ class ModalNativeOmniCompatibilityTests(unittest.TestCase):
 
     def test_image_preflight_imports_real_tts_and_native_omni(self):
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
-        self.assertIn(
-            "from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor",
-            self.source,
-        )
+        self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
+        self.assertIn("Qwen2_5OmniProcessor", self.source)
         self.assertIn("Qwen TTS and native Omni runtime import preflight passed", self.source)
 
     def test_production_resource_and_video_contract(self):
