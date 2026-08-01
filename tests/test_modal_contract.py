@@ -41,17 +41,21 @@ class ModalContractTests(unittest.TestCase):
 
     def test_qwen_omni_runtime_is_complete_and_preflighted(self):
         self.assertIn("torchvision==0.23.0", self.source)
-        self.assertIn('"numpy==2.0.0"', self.source)
+        self.assertNotIn('"numpy==2.0.0"', self.source)
         self.assertIn('"qwen-omni-utils[decord]>=0.0.8"', self.source)
+        final_pin = (
+            "python -m pip install --force-reinstall "
+            "numpy==2.4.6 numba==0.64.0"
+        )
+        self.assertIn(final_pin, self.source)
         self.assertIn("import decord, numba, numpy, torch, torchvision", self.source)
+        self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
         success_marker = "Qwen TTS and Omni runtime import preflight passed"
         self.assertIn(success_marker, self.source)
-        self.assertLess(
-            self.source.index(success_marker),
-            self.source.index(".env("),
-        )
+        self.assertLess(self.source.index(final_pin), self.source.index(success_marker))
+        self.assertLess(self.source.index(success_marker), self.source.index(".env("))
 
     def test_real_t4_reviewer_probe_runs_before_expensive_canary(self):
         self.assertIn("def reviewer_runtime_probe()", self.source)
