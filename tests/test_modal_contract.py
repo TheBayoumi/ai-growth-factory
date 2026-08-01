@@ -39,6 +39,19 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn('"sox"', self.source)
         self.assertIn('"libsox-fmt-all"', self.source)
 
+    def test_qwen_omni_runtime_is_complete_and_preflighted(self):
+        self.assertIn("torchvision==0.23.0", self.source)
+        self.assertIn('"numpy==2.0.0"', self.source)
+        self.assertIn('"qwen-omni-utils[decord]>=0.0.8"', self.source)
+        self.assertIn("import decord, torch, torchvision", self.source)
+        self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
+        self.assertIn("Qwen2_5OmniProcessor", self.source)
+        self.assertIn("Qwen Omni runtime import preflight passed", self.source)
+        self.assertLess(
+            self.source.index("Qwen Omni runtime import preflight passed"),
+            self.source.index(".env("),
+        )
+
     def test_gptq_build_uses_preinstalled_torch(self):
         self.assertIn(
             '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',

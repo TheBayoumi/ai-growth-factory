@@ -24,22 +24,33 @@ worker_image = (
     .apt_install("ffmpeg", "libsndfile1", "sox", "libsox-fmt-all", "git")
     .run_commands(
         "python -m pip install --upgrade pip wheel setuptools",
-        "python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128",
+        (
+            "python -m pip install torch==2.8.0 torchaudio==2.8.0 "
+            "torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128"
+        ),
     )
     .pip_install(
         "requests==2.32.5",
         "Pillow==11.3.0",
         "imageio-ffmpeg==0.6.0",
+        "numpy==2.0.0",
         "soundfile>=0.12,<0.14",
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
         "accelerate==1.12.0",
-        "qwen-omni-utils>=0.0.8",
+        "qwen-omni-utils[decord]>=0.0.8",
     )
     # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
     # it can see the CUDA-enabled torch installation from the previous image layer.
     .run_commands(
         "python -m pip install --no-build-isolation gptqmodel==2.0.0",
+        (
+            "python -c \"import decord, torch, torchvision; "
+            "from qwen_omni_utils import process_mm_info; "
+            "from transformers import Qwen2_5OmniForConditionalGeneration, "
+            "Qwen2_5OmniProcessor; "
+            "print('Qwen Omni runtime import preflight passed')\""
+        ),
     )
     .env(
         {
