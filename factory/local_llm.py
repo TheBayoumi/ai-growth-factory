@@ -65,10 +65,6 @@ NARRATION_MAX_WORDS = 190
 NARRATION_TARGET_MIN_WORDS = 145
 NARRATION_TARGET_MAX_WORDS = 165
 
-# These sentences contain no topic-specific claims. They are used only after the
-# model has exhausted its bounded repair attempts and the script is already close
-# to the minimum length. This avoids spending TTS GPU time on a three-word miss
-# without weakening the evidence or duration gates.
 EVIDENCE_SAFE_CLOSES = (
     "Before adopting it, read the linked primary sources, test the feature on a controlled task, and compare the result with your current workflow.",
     "That separates an interesting release from a dependable production tool.",
@@ -182,12 +178,6 @@ def _word_count(text: str) -> int:
 
 
 def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
-    """Add a claim-neutral verification close to an almost-valid final draft.
-
-    The model still gets the first three opportunities to produce a complete
-    script. This deterministic fallback is intentionally limited to drafts that
-    are already at least 100 words, so materially incomplete scripts still fail.
-    """
     narration = str(raw.get("narration") or "").strip()
     word_count = _word_count(narration)
     if not 100 <= word_count < NARRATION_MIN_WORDS:
@@ -205,20 +195,94 @@ def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
     return corrected
 
 
+def _balanced_source_candidates(
+    sources: list[SourceItem],
+    *,
+    limit: int = 30,
+) -> list[SourceItem]:
+    """Round-robin recent sources by publisher so one feed cannot dominate the prompt."""
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+
+    grouped: dict[str, list[SourceItem]] = {}
+    publisher_order: list[str] = []
+    for source in sources:
+        key = source.publisher.strip().casefold()
+        if key not in grouped:
+            grouped[key] = []
+            publisher_order.append(key)
+        grouped[key].append(source)
+
+    selected: list[SourceItem] = []
+    depth = 0
+    while len(selected) < limit:
+        added = False
+        for key in publisher_order:
+            group = grouped[key]
+            if depth >= len(group):
+                continue
+            selected.append(group[depth])
+            added = True
+            if len(selected) >= limit:
+                break
+        if not added:
+            break
+        depth += 1
+    return selected
+
+
+def _publisher_source_table(
+    source_payload: list[dict[str, Any]],
+    *,
+    urls_per_publisher: int = 4,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for item in source_payload:
+        publisher = str(item.get("publisher") or "").strip()
+        key = publisher.casefold()
+        if key not in grouped:
+            grouped[key] = {"publisher": publisher, "sources": []}
+            order.append(key)
+        sources = grouped[key]["sources"]
+        if len(sources) < urls_per_publisher:
+            sources.append(
+                {
+                    "source_id": item.get("source_id"),
+                    "title": str(item.get("title") or ""),
+                    "url": str(item.get("url") or ""),
+                }
+            )
+    return [grouped[key] for key in order]
+
+
+def _selected_publishers(
+    previous: dict[str, Any],
+    source_payload: list[dict[str, Any]],
+) -> list[str]:
+    selected = previous.get("source_urls")
+    if not isinstance(selected, list):
+        return []
+    publisher_by_url = {
+        str(item.get("url") or ""): str(item.get("publisher") or "").strip()
+        for item in source_payload
+    }
+    publishers: list[str] = []
+    seen: set[str] = set()
+    for raw_url in selected:
+        publisher = publisher_by_url.get(str(raw_url), "")
+        key = publisher.casefold()
+        if publisher and key not in seen:
+            publishers.append(publisher)
+            seen.add(key)
+    return publishers
+
+
 def _normalize_scene_source_indices(
     scenes_raw: list[Any],
     source_urls: list[str],
     sources: list[SourceItem],
 ) -> list[int]:
-    """Resolve a model's source-index convention without inventing attribution.
-
-    The canonical contract is zero-based indexing into ``source_urls``. Qwen can
-    occasionally emit one-based local positions or positions from the numbered
-    SOURCE ENTRIES catalog. Those alternatives are accepted only when the whole
-    scene set maps unambiguously back to URLs already selected in ``source_urls``.
-    Arbitrary clamping, modulo operations, and references to unselected sources
-    remain fail-closed because they could attach a claim to the wrong evidence.
-    """
     raw_indices: list[int] = []
     for scene in scenes_raw:
         if not isinstance(scene, dict) or "source_index" not in scene:
@@ -299,6 +363,8 @@ def _package_from_raw(
     allowed_by_url = {item.url: item.publisher for item in sources}
     if len(source_urls) < settings.min_primary_sources:
         raise LocalLLMError("Package did not cite enough supplied primary sources")
+    if len(set(source_urls)) != len(source_urls):
+        raise LocalLLMError("source_urls must not contain duplicates")
     if not set(source_urls).issubset(allowed_by_url):
         raise LocalLLMError("Package cited a URL that was not supplied")
     if len(source_publishers) != len(source_urls):
@@ -308,7 +374,10 @@ def _package_from_raw(
             raise LocalLLMError(f"Publisher mismatch for source URL: {url}")
     independent = {allowed_by_url[url].strip().casefold() for url in source_urls}
     if len(independent) < settings.min_primary_sources:
-        raise LocalLLMError("Package did not use enough independent primary publishers")
+        raise LocalLLMError(
+            f"Package used {len(independent)} independent primary publisher(s); "
+            f"required {settings.min_primary_sources}"
+        )
 
     narration = str(raw["narration"]).strip()
     word_count = _word_count(narration)
@@ -376,16 +445,31 @@ def _repair_prompt(
     validation_error: str,
     previous: dict[str, Any],
     source_payload: list[dict[str, Any]],
+    min_primary_sources: int,
 ) -> str:
     current_word_count = _word_count(str(previous.get("narration") or ""))
     minimum_addition = max(0, NARRATION_TARGET_MIN_WORDS - current_word_count)
     source_index_table = _selected_source_index_table(previous, source_payload)
+    publisher_table = _publisher_source_table(source_payload)
+    current_publishers = _selected_publishers(previous, source_payload)
     valid_max = len(source_index_table) - 1
     return f"""
 Repair the previous JSON package so it passes the stated validation error. Return the COMPLETE corrected JSON object only, not a patch.
 
 VALIDATION ERROR:
 {validation_error}
+
+PUBLISHER-DIVERSITY REPAIR:
+- The package must cite at least {min_primary_sources} DISTINCT publisher names.
+- The currently selected distinct publishers are: {json.dumps(current_publishers, ensure_ascii=False)}.
+- Multiple URLs from one publisher still count as one publisher.
+- Choose source_urls from at least {min_primary_sources} different rows in PUBLISHER SOURCE OPTIONS.
+- Copy each publisher name exactly into the matching position of source_publishers.
+- When replacing a source, rewrite any narration, scene, title, or description claim that the replacement does not support.
+- Never substitute a URL while retaining an unsupported claim, and never invent cross-source confirmation.
+
+PUBLISHER SOURCE OPTIONS:
+{json.dumps(publisher_table, ensure_ascii=False)}
 
 NARRATION REPAIR:
 - The previous narration contains {current_word_count} whitespace-separated words.
@@ -398,15 +482,16 @@ SCENE SOURCE-INDEX REPAIR:
 - source_index is a zero-based position in the JSON package's own source_urls array.
 - source_index is NOT a SOURCE ENTRIES source_id and must never copy that catalog identifier.
 - The only valid source_index values for this package are 0 through {valid_max}.
-- Replace every scene source_index using the exact VALID SCENE SOURCE INDEX TABLE below.
+- Replace every scene source_index using the exact VALID SCENE SOURCE INDEX TABLE below after finalizing source_urls.
 - Never clamp, wrap, or point a scene at a source that does not support its claim.
 
-VALID SCENE SOURCE INDEX TABLE:
+VALID SCENE SOURCE INDEX TABLE FROM THE PREVIOUS PACKAGE:
 {json.dumps(source_index_table, ensure_ascii=False)}
 
 NON-NEGOTIABLE RULES:
 - Use only source URLs and publisher names copied exactly from SOURCE ENTRIES.
-- Preserve factual claims unless the supplied sources require correction.
+- source_urls must be unique.
+- Preserve factual claims only when the selected supplied sources support them.
 - scenes must contain exactly 6 objects.
 - Every scene source_index must be valid for the corrected source_urls array.
 - source_urls and source_publishers must correspond one-for-one.
@@ -422,7 +507,7 @@ SOURCE ENTRIES:
 
 
 def generate_package(settings: Settings, sources: list[SourceItem], strategy: Strategy) -> VideoPackage:
-    source_candidates = sources[:30]
+    source_candidates = _balanced_source_candidates(sources, limit=30)
     source_payload = [
         {
             "source_id": source_id,
@@ -434,13 +519,14 @@ def generate_package(settings: Settings, sources: list[SourceItem], strategy: St
         }
         for source_id, item in enumerate(source_candidates)
     ]
+    publisher_table = _publisher_source_table(source_payload)
     cta = (
         f"Use this owner-controlled CTA exactly once: {settings.monetization_label}: {settings.monetization_url}"
         if settings.monetization_url
         else "Use a natural subscribe CTA; do not invent a product, affiliate link, or revenue claim."
     )
     prompt = f"""
-Use ONLY the supplied primary-source feed entries. Select one current AI development supported by at least two supplied URLs. A second source may provide context rather than independent confirmation, but do not imply independent confirmation when it is not present. Never invent dates, benchmarks, pricing, availability, quotes, partnerships, or capabilities.
+Use ONLY the supplied primary-source feed entries. Select one current AI development that can be responsibly explained using at least {settings.min_primary_sources} DISTINCT supplied publishers. A second publisher may provide context rather than independent confirmation, but do not imply independent confirmation when it is not present. Never invent dates, benchmarks, pricing, availability, quotes, partnerships, or capabilities.
 
 Creative strategy:
 - hook: {strategy.hook}
@@ -458,9 +544,18 @@ Return one JSON object containing:
 - tags: 8-14 plain strings
 - thumbnail_text: 2-5 words
 - top_comment: one useful question plus CTA when configured
-- source_urls: 2-5 URLs copied exactly from the supplied entries
+- source_urls: 2-5 UNIQUE URLs copied exactly from the supplied entries and spanning at least {settings.min_primary_sources} distinct publishers
 - source_publishers: publisher names corresponding one-for-one with source_urls
 - scenes: exactly 6 objects with heading <=5 words, body <=18 words, a procedural visual direction, and source_index. Do not request copyrighted footage, logos, screenshots, or real-person likenesses.
+
+PUBLISHER-DIVERSITY CONTRACT:
+- Choose source_urls from at least {settings.min_primary_sources} different rows in PUBLISHER SOURCE OPTIONS.
+- Multiple URLs from one publisher still count as one publisher.
+- Copy publisher names exactly and keep source_publishers aligned one-for-one with source_urls.
+- If the sources cannot support one coherent package across that many publishers, return skip_reason rather than weakening attribution.
+
+PUBLISHER SOURCE OPTIONS:
+{json.dumps(publisher_table, ensure_ascii=False)}
 
 SOURCE-INDEX CONTRACT:
 - SOURCE ENTRIES source_id values identify catalog rows only.
@@ -493,6 +588,7 @@ SOURCE ENTRIES:
                 validation_error=str(exc),
                 previous=raw,
                 source_payload=source_payload,
+                min_primary_sources=settings.min_primary_sources,
             )
 
     assert last_error is not None
