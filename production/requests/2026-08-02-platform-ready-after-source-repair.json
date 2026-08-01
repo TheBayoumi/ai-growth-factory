@@ -1,0 +1,25 @@
+{
+  "request_id": "2026-08-02-platform-ready-after-source-repair",
+  "requested_at": "2026-08-02T02:05:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "runtime": {
+    "gpu": "A10",
+    "tts": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+    "reviewer": "Qwen/Qwen2.5-Omni-3B"
+  },
+  "output": {
+    "aspect_ratio": "9:16",
+    "resolution": "1080x1920",
+    "fps": 30,
+    "privacy": "artifact_only"
+  },
+  "acceptance": {
+    "real_qwen3_tts": true,
+    "real_native_qwen_omni_review": true,
+    "temporal_stability_required": true,
+    "human_perceptual_review_required": true,
+    "validated_source_mapping_required": true
+  }
+}
