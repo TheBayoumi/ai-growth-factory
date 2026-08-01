@@ -89,6 +89,12 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("modal token new", self.workflow)
         self.assertNotIn("Authorize Modal in browser", self.workflow)
 
+    def test_non_verification_merges_cannot_block_gpu_verification(self):
+        self.assertIn("modal-gpu-production-verification-v2", self.workflow)
+        self.assertIn("modal-gpu-nonverification-{0}", self.workflow)
+        self.assertIn("github.run_id", self.workflow)
+        self.assertNotIn("group: modal-gpu-production-verification\n", self.workflow)
+
     def test_credentials_fail_before_expensive_setup(self):
         credentials_index = self.workflow.index("Validate persistent Modal credentials")
         python_index = self.workflow.index("Set up Python")
