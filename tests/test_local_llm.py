@@ -67,6 +67,30 @@ class LocalLLMTests(unittest.TestCase):
         self.assertIn("https://a.example/news", package.description)
         self.assertEqual(len(package.scenes), 6)
 
+    def test_package_repairs_undersized_narration(self):
+        undersized = self.package()
+        undersized["narration"] = " ".join(f"short{index}" for index in range(96))
+        corrected = self.package()
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", side_effect=[undersized, corrected]
+        ) as chat:
+            package = generate_package(Settings.from_env(), self.sources, self.strategy)
+        self.assertEqual(len(package.narration.split()), 140)
+        self.assertEqual(chat.call_count, 2)
+        repair_prompt = chat.call_args_list[1].args[1]
+        self.assertIn("Narration word count outside quality gate: 96", repair_prompt)
+        self.assertIn("135-175 whitespace-separated words", repair_prompt)
+
+    def test_package_stops_after_three_invalid_content_attempts(self):
+        undersized = self.package()
+        undersized["narration"] = "too short"
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", side_effect=[undersized, undersized, undersized]
+        ) as chat:
+            with self.assertRaisesRegex(LocalLLMError, "failed after 3 attempts"):
+                generate_package(Settings.from_env(), self.sources, self.strategy)
+        self.assertEqual(chat.call_count, 3)
+
     def test_package_rejects_scene_source_index_out_of_range(self):
         raw = self.package()
         raw["scenes"][2]["source_index"] = 9

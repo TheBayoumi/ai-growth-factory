@@ -47,6 +47,20 @@ PACKAGE_SCHEMA: dict[str, Any] = {
 }
 
 
+PACKAGE_REQUIRED_KEYS = {
+    "topic",
+    "narration",
+    "title",
+    "description",
+    "tags",
+    "thumbnail_text",
+    "top_comment",
+    "source_urls",
+    "source_publishers",
+    "scenes",
+}
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     clean = text.strip()
     if clean.startswith("```"):
@@ -148,6 +162,105 @@ def healthcheck(settings: Settings) -> dict[str, Any]:
     return {"ok": True, "models": [str(item.get("id", "")) for item in models]}
 
 
+def _package_from_raw(
+    settings: Settings,
+    sources: list[SourceItem],
+    raw: dict[str, Any],
+) -> VideoPackage:
+    if raw.get("skip_reason"):
+        raise LocalLLMError(f"No publishable trend: {raw['skip_reason']}")
+
+    missing = PACKAGE_REQUIRED_KEYS - set(raw)
+    if missing:
+        raise LocalLLMError("Package missing keys: " + ", ".join(sorted(missing)))
+
+    source_urls = [str(value) for value in raw["source_urls"]]
+    source_publishers = [str(value) for value in raw["source_publishers"]]
+    allowed_by_url = {item.url: item.publisher for item in sources}
+    if len(source_urls) < settings.min_primary_sources:
+        raise LocalLLMError("Package did not cite enough supplied primary sources")
+    if not set(source_urls).issubset(allowed_by_url):
+        raise LocalLLMError("Package cited a URL that was not supplied")
+    if len(source_publishers) != len(source_urls):
+        raise LocalLLMError("source_publishers must correspond one-for-one with source_urls")
+    for url, publisher in zip(source_urls, source_publishers, strict=True):
+        if publisher.strip().casefold() != allowed_by_url[url].strip().casefold():
+            raise LocalLLMError(f"Publisher mismatch for source URL: {url}")
+    independent = {allowed_by_url[url].strip().casefold() for url in source_urls}
+    if len(independent) < settings.min_primary_sources:
+        raise LocalLLMError("Package did not use enough independent primary publishers")
+
+    narration = str(raw["narration"]).strip()
+    word_count = len(narration.split())
+    if not 120 <= word_count <= 190:
+        raise LocalLLMError(f"Narration word count outside quality gate: {word_count}")
+
+    scenes_raw = raw["scenes"]
+    if not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
+        raise LocalLLMError("Exactly six scenes are required")
+    scenes: list[Scene] = []
+    for scene in scenes_raw:
+        source_index = int(scene["source_index"])
+        if not 0 <= source_index < len(source_urls):
+            raise LocalLLMError(f"Scene source_index out of range: {source_index}")
+        scenes.append(
+            Scene(
+                heading=str(scene["heading"])[:60],
+                body=str(scene["body"])[:180],
+                visual=str(scene["visual"])[:400],
+                source_index=source_index,
+            )
+        )
+
+    description = str(raw["description"]).strip()
+    for source_url in source_urls:
+        if source_url not in description:
+            description += f"\n{source_url}"
+
+    return VideoPackage(
+        topic=str(raw["topic"]).strip(),
+        narration=narration,
+        title=str(raw["title"]).strip()[:90],
+        description=description[:4900],
+        tags=[str(tag).strip()[:40] for tag in raw["tags"]][:14],
+        thumbnail_text=str(raw["thumbnail_text"]).strip()[:45],
+        top_comment=str(raw["top_comment"]).strip()[:9000],
+        scenes=scenes,
+        source_urls=source_urls,
+        source_publishers=source_publishers,
+    )
+
+
+def _repair_prompt(
+    *,
+    validation_error: str,
+    previous: dict[str, Any],
+    source_payload: list[dict[str, str]],
+) -> str:
+    return f"""
+Repair the previous JSON package so it passes the stated validation error. Return the COMPLETE corrected JSON object only, not a patch.
+
+VALIDATION ERROR:
+{validation_error}
+
+NON-NEGOTIABLE RULES:
+- Use only source URLs and publisher names copied exactly from SOURCE ENTRIES.
+- Preserve factual claims unless the supplied sources require correction.
+- narration must contain 135-175 whitespace-separated words. Count the words before returning.
+- scenes must contain exactly 6 objects.
+- Every scene source_index must be valid for the corrected source_urls array.
+- source_urls and source_publishers must correspond one-for-one.
+- Keep title <=90 characters, thumbnail_text 2-5 words, and tags between 8 and 14 items.
+- Do not return skip_reason unless the sources truly cannot support a publishable package.
+
+PREVIOUS JSON:
+{json.dumps(previous, ensure_ascii=False)}
+
+SOURCE ENTRIES:
+{json.dumps(source_payload, ensure_ascii=False)}
+""".strip()
+
+
 def generate_package(settings: Settings, sources: list[SourceItem], strategy: Strategy) -> VideoPackage:
     source_payload = [
         {
@@ -177,7 +290,7 @@ Creative strategy:
 
 Return one JSON object containing:
 - topic: string
-- narration: 135-175 words, exact spoken script, credible and non-hyped
+- narration: 135-175 whitespace-separated words, exact spoken script, credible and non-hyped. Count the words before returning.
 - title: <=90 characters
 - description: two concise paragraphs followed by a Sources section containing every used source URL
 - tags: 8-14 plain strings
@@ -192,72 +305,24 @@ When no topic satisfies the evidence and quality rules, return only {{"skip_reas
 SOURCE ENTRIES:
 {json.dumps(source_payload, ensure_ascii=False)}
 """.strip()
-    raw = _chat(settings, prompt)
-    if raw.get("skip_reason"):
-        raise LocalLLMError(f"No publishable trend: {raw['skip_reason']}")
-    required = {
-        "topic",
-        "narration",
-        "title",
-        "description",
-        "tags",
-        "thumbnail_text",
-        "top_comment",
-        "source_urls",
-        "source_publishers",
-        "scenes",
-    }
-    missing = required - set(raw)
-    if missing:
-        raise LocalLLMError("Package missing keys: " + ", ".join(sorted(missing)))
-    source_urls = [str(value) for value in raw["source_urls"]]
-    source_publishers = [str(value) for value in raw["source_publishers"]]
-    allowed_by_url = {item.url: item.publisher for item in sources}
-    if len(source_urls) < settings.min_primary_sources:
-        raise LocalLLMError("Package did not cite enough supplied primary sources")
-    if not set(source_urls).issubset(allowed_by_url):
-        raise LocalLLMError("Package cited a URL that was not supplied")
-    if len(source_publishers) != len(source_urls):
-        raise LocalLLMError("source_publishers must correspond one-for-one with source_urls")
-    for url, publisher in zip(source_urls, source_publishers, strict=True):
-        if publisher.strip().casefold() != allowed_by_url[url].strip().casefold():
-            raise LocalLLMError(f"Publisher mismatch for source URL: {url}")
-    independent = {allowed_by_url[url].strip().casefold() for url in source_urls}
-    if len(independent) < settings.min_primary_sources:
-        raise LocalLLMError("Package did not use enough independent primary publishers")
-    narration = str(raw["narration"]).strip()
-    word_count = len(narration.split())
-    if not 120 <= word_count <= 190:
-        raise LocalLLMError(f"Narration word count outside quality gate: {word_count}")
-    scenes_raw = raw["scenes"]
-    if not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
-        raise LocalLLMError("Exactly six scenes are required")
-    scenes: list[Scene] = []
-    for scene in scenes_raw:
-        source_index = int(scene["source_index"])
-        if not 0 <= source_index < len(source_urls):
-            raise LocalLLMError(f"Scene source_index out of range: {source_index}")
-        scenes.append(
-            Scene(
-                heading=str(scene["heading"])[:60],
-                body=str(scene["body"])[:180],
-                visual=str(scene["visual"])[:400],
-                source_index=source_index,
+
+    current_prompt = prompt
+    last_error: LocalLLMError | None = None
+    for package_attempt in range(3):
+        raw = _chat(settings, current_prompt)
+        try:
+            return _package_from_raw(settings, sources, raw)
+        except LocalLLMError as exc:
+            if raw.get("skip_reason"):
+                raise
+            last_error = exc
+            if package_attempt == 2:
+                break
+            current_prompt = _repair_prompt(
+                validation_error=str(exc),
+                previous=raw,
+                source_payload=source_payload,
             )
-        )
-    description = str(raw["description"]).strip()
-    for source_url in source_urls:
-        if source_url not in description:
-            description += f"\n{source_url}"
-    return VideoPackage(
-        topic=str(raw["topic"]).strip(),
-        narration=narration,
-        title=str(raw["title"]).strip()[:90],
-        description=description[:4900],
-        tags=[str(tag).strip()[:40] for tag in raw["tags"]][:14],
-        thumbnail_text=str(raw["thumbnail_text"]).strip()[:45],
-        top_comment=str(raw["top_comment"]).strip()[:9000],
-        scenes=scenes,
-        source_urls=source_urls,
-        source_publishers=source_publishers,
-    )
+
+    assert last_error is not None
+    raise LocalLLMError(f"Package validation failed after 3 attempts: {last_error}") from last_error
