@@ -30,6 +30,16 @@ class ModalContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
 
+    def test_gptq_build_uses_preinstalled_torch(self):
+        self.assertIn(
+            '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',
+            self.source,
+        )
+        pip_install_section = self.source.split(".pip_install(", 1)[1].split(
+            ")\n    # gptqmodel", 1
+        )[0]
+        self.assertNotIn("gptqmodel", pip_install_section)
+
     def test_openai_is_not_a_modal_runtime_dependency(self):
         self.assertNotIn("OPENAI_API_KEY", self.source)
         self.assertNotIn("gpt-realtime", self.source.lower())
