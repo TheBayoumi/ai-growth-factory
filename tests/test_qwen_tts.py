@@ -138,7 +138,7 @@ class QwenTTSTests(unittest.TestCase):
     def test_missing_cuda_capability_fails_before_unsafe_float16_load(self):
         model = Mock()
         torch = FakeTensorModule()
-        torch.cuda.get_device_capability.side_effect = RuntimeError("driver query failed")
+        torch.cuda.get_device_capability.side_effect = AttributeError("capability unavailable")
         qwen_module, soundfile = self.runtime_modules(model, torch)
 
         with patch.dict(
