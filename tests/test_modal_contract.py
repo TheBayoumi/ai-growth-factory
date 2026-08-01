@@ -5,7 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODAL_APP = ROOT / "cloud" / "modal_app.py"
-MODAL_WORKFLOW = ROOT / ".github" / "workflows" / "modal-production-verification.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+OLD_PRODUCTION_WORKFLOW = ROOT / ".github" / "workflows" / "modal-production-verification.yml"
 REVIEWER_REQUIREMENTS = ROOT / "requirements-reviewer.txt"
 
 
@@ -13,7 +14,7 @@ class ModalContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = MODAL_APP.read_text(encoding="utf-8")
-        cls.workflow = MODAL_WORKFLOW.read_text(encoding="utf-8")
+        cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         cls.reviewer_requirements = REVIEWER_REQUIREMENTS.read_text(encoding="utf-8")
 
     def test_modal_source_is_valid_python(self):
@@ -57,6 +58,14 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("state_volume.commit()", self.source)
         self.assertIn("hf_cache.commit()", self.source)
 
+    def test_production_is_gated_on_both_merge_ci_matrix_jobs(self):
+        self.assertIn("production-verification:", self.workflow)
+        self.assertIn("needs: test", self.workflow)
+        self.assertIn('python-version: ["3.12", "3.13"]', self.workflow)
+        self.assertIn("github.event.pull_request.merged == true", self.workflow)
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')", self.workflow)
+        self.assertFalse(OLD_PRODUCTION_WORKFLOW.exists())
+
     def test_production_workflow_uses_persistent_modal_secrets(self):
         self.assertIn('MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}', self.workflow)
         self.assertIn('MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}', self.workflow)
@@ -64,21 +73,13 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("modal token new", self.workflow)
         self.assertNotIn("Authorize Modal in browser", self.workflow)
 
-    def test_production_goes_directly_from_deploy_to_generation(self):
+    def test_production_runs_after_verified_checkout(self):
+        self.assertIn("Check out CI-verified main", self.workflow)
         self.assertIn("Deploy A10 production worker", self.workflow)
         self.assertIn("Generate real platform-ready video and capture result", self.workflow)
-        self.assertNotIn("Probe T4 reviewer runtime", self.workflow)
-        self.assertNotIn("--reviewer-probe", self.workflow)
-        deploy_index = self.workflow.index("Deploy A10 production worker")
-        generate_index = self.workflow.index("Generate real platform-ready video")
-        self.assertLess(deploy_index, generate_index)
-
-    def test_production_does_not_duplicate_merge_ci(self):
-        self.assertIn("python -m compileall -q factory cloud", self.workflow)
-        self.assertIn("python scripts/repository_preflight.py", self.workflow)
-        self.assertNotIn("python -m unittest", self.workflow)
-        self.assertNotIn("coverage", self.workflow)
-        self.assertNotIn("Install system dependencies", self.workflow)
+        test_index = self.workflow.index("Unit and integration tests")
+        production_index = self.workflow.index("production-verification:")
+        self.assertLess(test_index, production_index)
 
     def test_output_bundle_is_downloaded_and_enforced(self):
         self.assertIn("rm -rf production-video", self.workflow)
@@ -97,6 +98,8 @@ class ModalContractTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertIn(f'"{name}"', self.workflow)
+        self.assertIn('video_qc.get("width") != 1080', self.workflow)
+        self.assertIn('video_qc.get("height") != 1920', self.workflow)
 
     def test_failed_generation_still_uploads_diagnostics(self):
         guard = "steps.production.outcome == 'success' || steps.production.outcome == 'failure'"

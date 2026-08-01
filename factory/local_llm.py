@@ -47,53 +47,6 @@ PACKAGE_SCHEMA: dict[str, Any] = {
 }
 
 
-PACKAGE_CORE_REQUIRED_KEYS = {
-    "topic",
-    "narration",
-    "title",
-    "description",
-    "source_urls",
-    "source_publishers",
-    "scenes",
-}
-
-NARRATION_MIN_WORDS = 120
-NARRATION_MAX_WORDS = 190
-NARRATION_TARGET_MIN_WORDS = 145
-NARRATION_TARGET_MAX_WORDS = 165
-
-EVIDENCE_SAFE_CLOSES = (
-    "Before adopting it, read the linked primary sources, test the feature on a controlled task, and compare the result with your current workflow.",
-    "That separates an interesting release from a dependable production tool.",
-    "The evidence should decide the next step, not the headline.",
-)
-
-DEFAULT_DISCOVERY_TAGS = (
-    "AI",
-    "Artificial Intelligence",
-    "AI News",
-    "AI Engineering",
-    "Machine Learning",
-    "AI Tools",
-    "Technology",
-    "AI Update",
-)
-
-THUMBNAIL_STOP_WORDS = {
-    "a",
-    "an",
-    "and",
-    "for",
-    "from",
-    "in",
-    "of",
-    "on",
-    "the",
-    "to",
-    "with",
-}
-
-
 def _extract_json(text: str) -> dict[str, Any]:
     clean = text.strip()
     if clean.startswith("```"):
@@ -195,431 +148,31 @@ def healthcheck(settings: Settings) -> dict[str, Any]:
     return {"ok": True, "models": [str(item.get("id", "")) for item in models]}
 
 
-def _word_count(text: str) -> int:
-    return len(text.split())
-
-
-def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
-    narration = str(raw.get("narration") or "").strip()
-    word_count = _word_count(narration)
-    if not 100 <= word_count < NARRATION_MIN_WORDS:
-        return raw
-
-    corrected = dict(raw)
-    lowered = narration.casefold()
-    for closing in EVIDENCE_SAFE_CLOSES:
-        if closing.casefold() not in lowered:
-            narration = f"{narration} {closing}".strip()
-            lowered = narration.casefold()
-        if _word_count(narration) >= 135:
-            break
-    corrected["narration"] = narration
-    return corrected
-
-
-def _deduplicated_nonempty_strings(values: Any, *, limit: int, max_length: int) -> list[str]:
-    if not isinstance(values, list):
-        return []
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        text = str(value).strip()[:max_length]
-        key = text.casefold()
-        if not text or key in seen:
-            continue
-        result.append(text)
-        seen.add(key)
-        if len(result) >= limit:
-            break
-    return result
-
-
-def _topic_tag_candidates(raw: dict[str, Any]) -> list[str]:
-    seed = f"{raw.get('topic', '')} {raw.get('title', '')}"
-    words = re.findall(r"[A-Za-z][A-Za-z0-9+#.-]{1,31}", seed)
-    return [word for word in words if word.casefold() not in THUMBNAIL_STOP_WORDS]
-
-
-def _derive_thumbnail_text(raw: dict[str, Any]) -> str:
-    existing = str(raw.get("thumbnail_text") or "").strip()
-    existing_words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#'.-]*", existing)
-    if 2 <= len(existing_words) <= 5:
-        return " ".join(existing_words).upper()[:45]
-
-    seed = str(raw.get("title") or raw.get("topic") or "AI Update")
-    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#'.-]*", seed)
-    significant = [word for word in words if word.casefold() not in THUMBNAIL_STOP_WORDS]
-    selected = (significant or words)[:5]
-    if len(selected) < 2:
-        selected = (selected + ["AI", "UPDATE"])[:2]
-    return " ".join(selected).upper()[:45]
-
-
-def _complete_display_metadata(raw: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    """Fill non-factual discovery metadata deterministically without altering claims."""
-    corrected = dict(raw)
-
-    tags = _deduplicated_nonempty_strings(corrected.get("tags"), limit=14, max_length=40)
-    seen = {tag.casefold() for tag in tags}
-    for candidate in (*_topic_tag_candidates(corrected), *DEFAULT_DISCOVERY_TAGS):
-        text = candidate.strip()[:40]
-        key = text.casefold()
-        if not text or key in seen:
-            continue
-        tags.append(text)
-        seen.add(key)
-        if len(tags) >= 8:
-            break
-    corrected["tags"] = tags[:14]
-
-    corrected["thumbnail_text"] = _derive_thumbnail_text(corrected)
-
-    top_comment = str(corrected.get("top_comment") or "").strip()
-    if not top_comment:
-        top_comment = "What would you test first?"
-        if settings.monetization_url:
-            label = settings.monetization_label.strip() or "Learn more"
-            top_comment += f" {label}: {settings.monetization_url}"
-        else:
-            top_comment += " Subscribe for evidence-backed AI updates."
-    corrected["top_comment"] = top_comment
-    return corrected
-
-
-def _balanced_source_candidates(
-    sources: list[SourceItem],
-    *,
-    limit: int = 30,
-) -> list[SourceItem]:
-    """Round-robin recent sources by publisher so one feed cannot dominate the prompt."""
-    if limit < 1:
-        raise ValueError("limit must be at least 1")
-
-    grouped: dict[str, list[SourceItem]] = {}
-    publisher_order: list[str] = []
-    for source in sources:
-        key = source.publisher.strip().casefold()
-        if key not in grouped:
-            grouped[key] = []
-            publisher_order.append(key)
-        grouped[key].append(source)
-
-    selected: list[SourceItem] = []
-    depth = 0
-    while len(selected) < limit:
-        added = False
-        for key in publisher_order:
-            group = grouped[key]
-            if depth >= len(group):
-                continue
-            selected.append(group[depth])
-            added = True
-            if len(selected) >= limit:
-                break
-        if not added:
-            break
-        depth += 1
-    return selected
-
-
-def _publisher_source_table(
-    source_payload: list[dict[str, Any]],
-    *,
-    urls_per_publisher: int = 4,
-) -> list[dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
-    for item in source_payload:
-        publisher = str(item.get("publisher") or "").strip()
-        key = publisher.casefold()
-        if key not in grouped:
-            grouped[key] = {"publisher": publisher, "sources": []}
-            order.append(key)
-        grouped_sources = grouped[key]["sources"]
-        if len(grouped_sources) < urls_per_publisher:
-            grouped_sources.append(
-                {
-                    "source_id": item.get("source_id"),
-                    "title": str(item.get("title") or ""),
-                    "url": str(item.get("url") or ""),
-                }
-            )
-    return [grouped[key] for key in order]
-
-
-def _selected_publishers(
-    previous: dict[str, Any],
-    source_payload: list[dict[str, Any]],
-) -> list[str]:
-    selected = previous.get("source_urls")
-    if not isinstance(selected, list):
-        return []
-    publisher_by_url = {
-        str(item.get("url") or ""): str(item.get("publisher") or "").strip()
-        for item in source_payload
-    }
-    publishers: list[str] = []
-    seen: set[str] = set()
-    for raw_url in selected:
-        publisher = publisher_by_url.get(str(raw_url), "")
-        key = publisher.casefold()
-        if publisher and key not in seen:
-            publishers.append(publisher)
-            seen.add(key)
-    return publishers
-
-
-def _normalize_scene_source_indices(
-    scenes_raw: list[Any],
-    source_urls: list[str],
-    sources: list[SourceItem],
-) -> list[int]:
-    raw_indices: list[int] = []
-    for scene in scenes_raw:
-        if not isinstance(scene, dict) or "source_index" not in scene:
-            raise LocalLLMError("Every scene requires an integer source_index")
-        value = scene["source_index"]
-        if isinstance(value, bool):
-            raise LocalLLMError("Every scene requires an integer source_index")
-        try:
-            index = int(value)
-        except (TypeError, ValueError) as exc:
-            raise LocalLLMError("Every scene requires an integer source_index") from exc
-        raw_indices.append(index)
-
-    if all(0 <= index < len(source_urls) for index in raw_indices):
-        return raw_indices
-
-    selected_index_by_url = {url: index for index, url in enumerate(source_urls)}
-    candidates: dict[str, tuple[int, ...]] = {}
-
-    if all(1 <= index <= len(source_urls) for index in raw_indices):
-        candidates["one-based source_urls"] = tuple(index - 1 for index in raw_indices)
-
-    for label, offset in (("zero-based SOURCE ENTRIES", 0), ("one-based SOURCE ENTRIES", 1)):
-        mapped: list[int] = []
-        for index in raw_indices:
-            source_position = index - offset
-            if not 0 <= source_position < len(sources):
-                mapped = []
-                break
-            selected_index = selected_index_by_url.get(sources[source_position].url)
-            if selected_index is None:
-                mapped = []
-                break
-            mapped.append(selected_index)
-        if mapped:
-            candidates[label] = tuple(mapped)
-
-    unique_mappings: dict[tuple[int, ...], list[str]] = {}
-    for label, mapping in candidates.items():
-        unique_mappings.setdefault(mapping, []).append(label)
-
-    if len(unique_mappings) == 1:
-        return list(next(iter(unique_mappings)))
-    if len(unique_mappings) > 1:
-        conventions = "; ".join(
-            f"{', '.join(labels)} -> {list(mapping)}"
-            for mapping, labels in unique_mappings.items()
-        )
-        raise LocalLLMError(
-            "Scene source_index convention is ambiguous; use zero-based positions "
-            f"from source_urls only. Candidates: {conventions}"
-        )
-
-    invalid = next(
-        (index for index in raw_indices if not 0 <= index < len(source_urls)),
-        raw_indices[0],
-    )
-    raise LocalLLMError(
-        f"Scene source_index out of range: {invalid}; valid zero-based source_urls "
-        f"range is 0-{len(source_urls) - 1}"
-    )
-
-
-def _package_from_raw(
-    settings: Settings,
-    sources: list[SourceItem],
-    raw: dict[str, Any],
-) -> VideoPackage:
-    if raw.get("skip_reason"):
-        raise LocalLLMError(f"No publishable trend: {raw['skip_reason']}")
-
-    missing = PACKAGE_CORE_REQUIRED_KEYS - set(raw)
-    if missing:
-        raise LocalLLMError("Package missing keys: " + ", ".join(sorted(missing)))
-
-    raw = _complete_display_metadata(raw, settings)
-
-    source_urls = [str(value) for value in raw["source_urls"]]
-    source_publishers = [str(value) for value in raw["source_publishers"]]
-    allowed_by_url = {item.url: item.publisher for item in sources}
-    if len(source_urls) < settings.min_primary_sources:
-        raise LocalLLMError("Package did not cite enough supplied primary sources")
-    if len(set(source_urls)) != len(source_urls):
-        raise LocalLLMError("source_urls must not contain duplicates")
-    if not set(source_urls).issubset(allowed_by_url):
-        raise LocalLLMError("Package cited a URL that was not supplied")
-    if len(source_publishers) != len(source_urls):
-        raise LocalLLMError("source_publishers must correspond one-for-one with source_urls")
-    for url, publisher in zip(source_urls, source_publishers, strict=True):
-        if publisher.strip().casefold() != allowed_by_url[url].strip().casefold():
-            raise LocalLLMError(f"Publisher mismatch for source URL: {url}")
-    independent = {allowed_by_url[url].strip().casefold() for url in source_urls}
-    if len(independent) < settings.min_primary_sources:
-        raise LocalLLMError(
-            f"Package used {len(independent)} independent primary publisher(s); "
-            f"required {settings.min_primary_sources}"
-        )
-
-    narration = str(raw["narration"]).strip()
-    word_count = _word_count(narration)
-    if not NARRATION_MIN_WORDS <= word_count <= NARRATION_MAX_WORDS:
-        raise LocalLLMError(f"Narration word count outside quality gate: {word_count}")
-
-    scenes_raw = raw["scenes"]
-    if not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
-        raise LocalLLMError("Exactly six scenes are required")
-    source_indices = _normalize_scene_source_indices(scenes_raw, source_urls, sources)
-    scenes: list[Scene] = []
-    for scene, source_index in zip(scenes_raw, source_indices, strict=True):
-        scenes.append(
-            Scene(
-                heading=str(scene["heading"])[:60],
-                body=str(scene["body"])[:180],
-                visual=str(scene["visual"])[:400],
-                source_index=source_index,
-            )
-        )
-
-    description = str(raw["description"]).strip()
-    for source_url in source_urls:
-        if source_url not in description:
-            description += f"\n{source_url}"
-
-    return VideoPackage(
-        topic=str(raw["topic"]).strip(),
-        narration=narration,
-        title=str(raw["title"]).strip()[:90],
-        description=description[:4900],
-        tags=[str(tag).strip()[:40] for tag in raw["tags"]][:14],
-        thumbnail_text=str(raw["thumbnail_text"]).strip()[:45],
-        top_comment=str(raw["top_comment"]).strip()[:9000],
-        scenes=scenes,
-        source_urls=source_urls,
-        source_publishers=source_publishers,
-    )
-
-
-def _selected_source_index_table(
-    previous: dict[str, Any],
-    source_payload: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    selected = previous.get("source_urls")
-    if not isinstance(selected, list):
-        return []
-    catalog = {str(item.get("url")): item for item in source_payload}
-    table: list[dict[str, Any]] = []
-    for source_index, raw_url in enumerate(selected):
-        url = str(raw_url)
-        item = catalog.get(url, {})
-        table.append(
-            {
-                "source_index": source_index,
-                "url": url,
-                "publisher": str(item.get("publisher") or ""),
-            }
-        )
-    return table
-
-
-def _repair_prompt(
-    *,
-    validation_error: str,
-    previous: dict[str, Any],
-    source_payload: list[dict[str, Any]],
-    min_primary_sources: int,
-) -> str:
-    current_word_count = _word_count(str(previous.get("narration") or ""))
-    minimum_addition = max(0, NARRATION_TARGET_MIN_WORDS - current_word_count)
-    source_index_table = _selected_source_index_table(previous, source_payload)
-    publisher_table = _publisher_source_table(source_payload)
-    current_publishers = _selected_publishers(previous, source_payload)
-    valid_max = len(source_index_table) - 1
-    return f"""
-Repair the previous JSON package so it passes the stated validation error. Return the COMPLETE corrected JSON object only, not a patch.
-
-VALIDATION ERROR:
-{validation_error}
-
-PUBLISHER-DIVERSITY REPAIR:
-- The package must cite at least {min_primary_sources} DISTINCT publisher names.
-- The currently selected distinct publishers are: {json.dumps(current_publishers, ensure_ascii=False)}.
-- Multiple URLs from one publisher still count as one publisher.
-- Choose source_urls from at least {min_primary_sources} different rows in PUBLISHER SOURCE OPTIONS.
-- Copy each publisher name exactly into the matching position of source_publishers.
-- When replacing a source, rewrite any narration, scene, title, or description claim that the replacement does not support.
-- Never substitute a URL while retaining an unsupported claim, and never invent cross-source confirmation.
-
-PUBLISHER SOURCE OPTIONS:
-{json.dumps(publisher_table, ensure_ascii=False)}
-
-NARRATION REPAIR:
-- The previous narration contains {current_word_count} whitespace-separated words.
-- Rewrite the complete narration to {NARRATION_TARGET_MIN_WORDS}-{NARRATION_TARGET_MAX_WORDS} words.
-- Add at least {minimum_addition} words when the previous narration is too short.
-- Do not merely append a fragment; preserve a natural hook, evidence, practical implication, caveat, and closing.
-- Count the final narration words before returning the JSON.
-
-SCENE SOURCE-INDEX REPAIR:
-- source_index is a zero-based position in the JSON package's own source_urls array.
-- source_index is NOT a SOURCE ENTRIES source_id and must never copy that catalog identifier.
-- The only valid source_index values for this package are 0 through {valid_max}.
-- Replace every scene source_index using the exact VALID SCENE SOURCE INDEX TABLE below after finalizing source_urls.
-- Never clamp, wrap, or point a scene at a source that does not support its claim.
-
-VALID SCENE SOURCE INDEX TABLE FROM THE PREVIOUS PACKAGE:
-{json.dumps(source_index_table, ensure_ascii=False)}
-
-NON-NEGOTIABLE RULES:
-- Use only source URLs and publisher names copied exactly from SOURCE ENTRIES.
-- source_urls must be unique.
-- Preserve factual claims only when the selected supplied sources support them.
-- scenes must contain exactly 6 objects.
-- Every scene source_index must be valid for the corrected source_urls array.
-- source_urls and source_publishers must correspond one-for-one.
-- Keep title <=90 characters, thumbnail_text 2-5 words, and tags between 8 and 14 items.
-- Do not return skip_reason unless the sources truly cannot support a publishable package.
-
-PREVIOUS JSON:
-{json.dumps(previous, ensure_ascii=False)}
-
-SOURCE ENTRIES:
-{json.dumps(source_payload, ensure_ascii=False)}
-""".strip()
-
-
-def generate_package(settings: Settings, sources: list[SourceItem], strategy: Strategy) -> VideoPackage:
-    source_candidates = _balanced_source_candidates(sources, limit=30)
-    source_payload = [
+def _source_payload(sources: list[SourceItem]) -> list[dict[str, str]]:
+    return [
         {
-            "source_id": source_id,
             "publisher": item.publisher,
             "title": item.title,
             "url": item.url,
             "published_at": item.published_at.isoformat(),
             "summary": item.summary,
         }
-        for source_id, item in enumerate(source_candidates)
+        for item in sources[:30]
     ]
-    publisher_table = _publisher_source_table(source_payload)
+
+
+def _initial_prompt(
+    settings: Settings,
+    strategy: Strategy,
+    source_payload: list[dict[str, str]],
+) -> str:
     cta = (
         f"Use this owner-controlled CTA exactly once: {settings.monetization_label}: {settings.monetization_url}"
         if settings.monetization_url
         else "Use a natural subscribe CTA; do not invent a product, affiliate link, or revenue claim."
     )
-    prompt = f"""
-Use ONLY the supplied primary-source feed entries. Select one current AI development that can be responsibly explained using at least {settings.min_primary_sources} DISTINCT supplied publishers. A second publisher may provide context rather than independent confirmation, but do not imply independent confirmation when it is not present. Never invent dates, benchmarks, pricing, availability, quotes, partnerships, or capabilities.
+    return f"""
+Use ONLY the supplied primary-source feed entries. Select one current AI development supported by at least two supplied URLs. A second source may provide context rather than independent confirmation, but do not imply independent confirmation when it is not present. Never invent dates, benchmarks, pricing, availability, quotes, partnerships, or capabilities.
 
 Creative strategy:
 - hook: {strategy.hook}
@@ -631,31 +184,15 @@ Creative strategy:
 
 Return one JSON object containing:
 - topic: string
-- narration: {NARRATION_TARGET_MIN_WORDS}-{NARRATION_TARGET_MAX_WORDS} whitespace-separated words, exact spoken script, credible and non-hyped. Count the words before returning.
+- narration: 135-175 words, exact spoken script, credible and non-hyped. The final hard acceptance range is 120-190 words; count the words before returning.
 - title: <=90 characters
 - description: two concise paragraphs followed by a Sources section containing every used source URL
-- tags: 8-14 plain strings
-- thumbnail_text: 2-5 words
-- top_comment: one useful question plus CTA when configured
-- source_urls: 2-5 UNIQUE URLs copied exactly from the supplied entries and spanning at least {settings.min_primary_sources} distinct publishers
+- tags: 8-14 plain strings. These are display metadata, not factual claims.
+- thumbnail_text: 2-5 words and <=45 characters. This is display metadata.
+- top_comment: one useful question plus CTA when configured. This is display metadata.
+- source_urls: 2-5 URLs copied exactly from the supplied entries
 - source_publishers: publisher names corresponding one-for-one with source_urls
-- scenes: exactly 6 objects with heading <=5 words, body <=18 words, a procedural visual direction, and source_index. Do not request copyrighted footage, logos, screenshots, or real-person likenesses.
-
-PUBLISHER-DIVERSITY CONTRACT:
-- Choose source_urls from at least {settings.min_primary_sources} different rows in PUBLISHER SOURCE OPTIONS.
-- Multiple URLs from one publisher still count as one publisher.
-- Copy publisher names exactly and keep source_publishers aligned one-for-one with source_urls.
-- If the sources cannot support one coherent package across that many publishers, return skip_reason rather than weakening attribution.
-
-PUBLISHER SOURCE OPTIONS:
-{json.dumps(publisher_table, ensure_ascii=False)}
-
-SOURCE-INDEX CONTRACT:
-- SOURCE ENTRIES source_id values identify catalog rows only.
-- scene.source_index must NOT copy source_id.
-- scene.source_index is the zero-based position in your returned source_urls array.
-- Valid scene.source_index values are therefore 0 through len(source_urls)-1.
-- Example: when source_urls is ["https://b.example", "https://a.example"], the first URL uses source_index 0 and the second uses source_index 1, regardless of their SOURCE ENTRIES source_id values.
+- scenes: exactly 6 objects with heading <=5 words, body <=18 words, a procedural visual direction, and source_index. source_index is ZERO-BASED into the final source_urls array: the first source is 0 and the last valid value is len(source_urls)-1. Never use source_index equal to len(source_urls). Do not request copyrighted footage, logos, screenshots, or real-person likenesses.
 
 When no topic satisfies the evidence and quality rules, return only {{"skip_reason":"specific reason"}}.
 
@@ -663,26 +200,335 @@ SOURCE ENTRIES:
 {json.dumps(source_payload, ensure_ascii=False)}
 """.strip()
 
-    current_prompt = prompt
-    last_error: LocalLLMError | None = None
-    for package_attempt in range(3):
-        raw = _chat(settings, current_prompt)
-        if package_attempt == 2:
-            raw = _stabilize_near_minimum_narration(raw)
-        try:
-            return _package_from_raw(settings, source_candidates, raw)
-        except LocalLLMError as exc:
-            if raw.get("skip_reason"):
-                raise
-            last_error = exc
-            if package_attempt == 2:
-                break
-            current_prompt = _repair_prompt(
-                validation_error=str(exc),
-                previous=raw,
-                source_payload=source_payload,
-                min_primary_sources=settings.min_primary_sources,
-            )
 
-    assert last_error is not None
-    raise LocalLLMError(f"Package validation failed after 3 attempts: {last_error}") from last_error
+def _repair_prompt(
+    initial_prompt: str,
+    previous: dict[str, Any],
+    error: str,
+) -> str:
+    return f"""
+{initial_prompt}
+
+The previous JSON failed deterministic validation:
+{error}
+
+Return a COMPLETE corrected JSON object. Do not return a patch.
+Preserve supplied source URLs exactly and do not add unsupported facts.
+The narration must contain 135-175 words; the hard accepted range is 120-190 words. Count before returning.
+source_index is ZERO-BASED into source_urls: valid values are 0 through len(source_urls)-1 only.
+
+PREVIOUS JSON:
+{json.dumps(previous, ensure_ascii=False)}
+""".strip()
+
+
+def _is_scene_source_index_error(error: Exception) -> bool:
+    return str(error).startswith("Scene source_index")
+
+
+def _scene_index_repair_prompt(
+    previous: dict[str, Any],
+    source_payload: list[dict[str, str]],
+    error: str,
+) -> str:
+    source_urls = [str(value) for value in previous.get("source_urls") or []]
+    if not source_urls:
+        raise LocalLLMError("Cannot repair scene source indices without source_urls")
+    available = {entry["url"]: entry for entry in source_payload}
+    source_table = []
+    for index, url in enumerate(source_urls):
+        entry = available.get(url)
+        if entry is None:
+            raise LocalLLMError(f"Cannot repair unknown source URL: {url}")
+        source_table.append(
+            {
+                "source_index": index,
+                "publisher": entry["publisher"],
+                "title": entry["title"],
+                "url": entry["url"],
+                "summary": entry["summary"],
+            }
+        )
+    return f"""
+The package is factually frozen and failed only this deterministic validation:
+{error}
+
+There are exactly {len(source_urls)} cited sources. Valid ZERO-BASED source_index values are 0 through {len(source_urls) - 1}. A value of {len(source_urls)} is invalid.
+
+Return one COMPLETE JSON object. Preserve every field and every character from PREVIOUS JSON except the six scenes[*].source_index integers. Do not change topic, narration, title, description, tags, thumbnail_text, top_comment, source_urls, source_publishers, scene headings, scene bodies, or visual directions.
+
+For each scene, choose the valid source_index whose supplied title or summary actually supports that scene's existing claim. Do not invent or reorder sources. Count six scenes before returning.
+
+INDEXED SOURCE TABLE:
+{json.dumps(source_table, ensure_ascii=False)}
+
+PREVIOUS JSON:
+{json.dumps(previous, ensure_ascii=False)}
+""".strip()
+
+
+def _merge_scene_indices(
+    frozen: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    frozen_scenes = frozen.get("scenes")
+    candidate_scenes = candidate.get("scenes")
+    if not isinstance(frozen_scenes, list) or len(frozen_scenes) != 6:
+        raise LocalLLMError("Cannot repair source indices without six frozen scenes")
+    if not isinstance(candidate_scenes, list) or len(candidate_scenes) != 6:
+        raise LocalLLMError("Scene-index repair must return exactly six scenes")
+
+    merged = json.loads(json.dumps(frozen))
+    merged_scenes: list[dict[str, Any]] = []
+    for index, (frozen_scene, candidate_scene) in enumerate(
+        zip(frozen_scenes, candidate_scenes, strict=True)
+    ):
+        if not isinstance(frozen_scene, dict) or not isinstance(candidate_scene, dict):
+            raise LocalLLMError(f"Scene-index repair returned invalid scene {index}")
+        if "source_index" not in candidate_scene:
+            raise LocalLLMError(f"Scene-index repair omitted source_index for scene {index}")
+        repaired_scene = dict(frozen_scene)
+        repaired_scene["source_index"] = candidate_scene["source_index"]
+        merged_scenes.append(repaired_scene)
+    merged["scenes"] = merged_scenes
+    return merged
+
+
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _fallback_tags(topic: str, strategy: Strategy) -> list[str]:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]*", topic)
+    stop = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "the",
+        "to",
+        "with",
+    }
+    candidates = [word for word in words if word.casefold() not in stop and len(word) >= 2]
+    candidates.extend(
+        [
+            "AI",
+            "Artificial Intelligence",
+            "AI News",
+            "AI Engineering",
+            "Machine Learning",
+            strategy.hook,
+            strategy.pacing,
+            strategy.visual,
+            "Technology",
+            "Tech News",
+        ]
+    )
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        clean = str(candidate).strip()[:40]
+        key = clean.casefold()
+        if clean and key not in seen:
+            seen.add(key)
+            unique.append(clean)
+        if len(unique) == 14:
+            break
+    return unique
+
+
+def _complete_tags(raw_tags: object, topic: str, strategy: Strategy) -> list[str]:
+    supplied = raw_tags if isinstance(raw_tags, list) else []
+    candidates = [str(tag).strip()[:40] for tag in supplied]
+    candidates.extend(_fallback_tags(topic, strategy))
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.casefold()
+        if candidate and key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+        if len(unique) == 14:
+            break
+    if len(unique) < 8:
+        raise LocalLLMError("Unable to complete at least eight display tags")
+    return unique
+
+
+def _complete_thumbnail_text(raw_text: object, topic: str) -> str:
+    supplied = str(raw_text or "").strip()
+    supplied_words = supplied.split()
+    if 2 <= len(supplied_words) <= 5 and len(supplied) <= 45:
+        return supplied
+    topic_words = re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.-]*", topic)
+    stop = {"a", "an", "and", "for", "from", "in", "of", "on", "the", "to", "with"}
+    meaningful = [word for word in topic_words if word.casefold() not in stop]
+    selected = meaningful[:4]
+    if len(selected) < 2:
+        selected = ["AI", "UPDATE"]
+    completed = " ".join(selected[:5]).upper()
+    if len(completed) > 45:
+        completed = " ".join(selected[:3]).upper()[:45].rstrip()
+    if not 2 <= len(completed.split()) <= 5:
+        completed = "AI UPDATE"
+    return completed
+
+
+def _complete_top_comment(raw_comment: object, settings: Settings) -> str:
+    supplied = str(raw_comment or "").strip()
+    if supplied:
+        return supplied[:9000]
+    if settings.monetization_url:
+        return (
+            "What would you test first? "
+            f"{settings.monetization_label}: {settings.monetization_url}"
+        )[:9000]
+    return "What would you test first? Subscribe for evidence-backed AI updates."
+
+
+def _validate_required_core(raw: dict[str, Any]) -> None:
+    factual_required = {
+        "topic",
+        "narration",
+        "title",
+        "description",
+        "source_urls",
+        "source_publishers",
+        "scenes",
+    }
+    missing = factual_required - set(raw)
+    if missing:
+        raise LocalLLMError("Package missing keys: " + ", ".join(sorted(missing)))
+
+
+def _normalize_scene_source_indices(
+    scenes_raw: list[dict[str, Any]],
+    source_count: int,
+) -> list[dict[str, Any]]:
+    values: list[int] = []
+    for scene in scenes_raw:
+        try:
+            values.append(int(scene["source_index"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LocalLLMError("Every scene requires an integer source_index") from exc
+    if source_count > 0 and all(1 <= value <= source_count for value in values):
+        return [dict(scene, source_index=value - 1) for scene, value in zip(scenes_raw, values, strict=True)]
+    return scenes_raw
+
+
+def _package_from_raw(
+    raw: dict[str, Any],
+    settings: Settings,
+    sources: list[SourceItem],
+    strategy: Strategy,
+) -> VideoPackage:
+    if raw.get("skip_reason"):
+        raise LocalLLMError(f"No publishable trend: {raw['skip_reason']}")
+    _validate_required_core(raw)
+    source_urls = [str(value) for value in raw["source_urls"]]
+    source_publishers = [str(value) for value in raw["source_publishers"]]
+    allowed_by_url = {item.url: item.publisher for item in sources}
+    if len(source_urls) < settings.min_primary_sources:
+        raise LocalLLMError("Package did not cite enough supplied primary sources")
+    if not set(source_urls).issubset(allowed_by_url):
+        raise LocalLLMError("Package cited a URL that was not supplied")
+    if len(source_publishers) != len(source_urls):
+        raise LocalLLMError("source_publishers must correspond one-for-one with source_urls")
+    for url, publisher in zip(source_urls, source_publishers, strict=True):
+        if publisher.strip().casefold() != allowed_by_url[url].strip().casefold():
+            raise LocalLLMError(f"Publisher mismatch for source URL: {url}")
+    independent = {allowed_by_url[url].strip().casefold() for url in source_urls}
+    if len(independent) < settings.min_primary_sources:
+        raise LocalLLMError("Package did not use enough independent primary publishers")
+    narration = str(raw["narration"]).strip()
+    narration_words = _word_count(narration)
+    if not 120 <= narration_words <= 190:
+        raise LocalLLMError(
+            "Narration word count outside quality gate: "
+            f"{narration_words}; required 120-190 words"
+        )
+    scenes_raw = raw["scenes"]
+    if not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
+        raise LocalLLMError("Exactly six scenes are required")
+    scenes_raw = _normalize_scene_source_indices(scenes_raw, len(source_urls))
+    scenes: list[Scene] = []
+    for scene in scenes_raw:
+        source_index = int(scene["source_index"])
+        if not 0 <= source_index < len(source_urls):
+            raise LocalLLMError(
+                f"Scene source_index out of range: {source_index}; valid zero-based "
+                f"source_urls range is 0-{len(source_urls) - 1}"
+            )
+        scenes.append(
+            Scene(
+                heading=str(scene["heading"])[:60],
+                body=str(scene["body"])[:180],
+                visual=str(scene["visual"])[:400],
+                source_index=source_index,
+            )
+        )
+    topic = str(raw["topic"]).strip()
+    description = str(raw["description"]).strip()
+    for source_url in source_urls:
+        if source_url not in description:
+            description += f"\n{source_url}"
+    return VideoPackage(
+        topic=topic,
+        narration=narration,
+        title=str(raw["title"]).strip()[:90],
+        description=description[:4900],
+        tags=_complete_tags(raw.get("tags"), topic, strategy),
+        thumbnail_text=_complete_thumbnail_text(raw.get("thumbnail_text"), topic),
+        top_comment=_complete_top_comment(raw.get("top_comment"), settings),
+        scenes=scenes,
+        source_urls=source_urls,
+        source_publishers=source_publishers,
+    )
+
+
+def generate_package(settings: Settings, sources: list[SourceItem], strategy: Strategy) -> VideoPackage:
+    source_payload = _source_payload(sources)
+    initial_prompt = _initial_prompt(settings, strategy, source_payload)
+    current_prompt = initial_prompt
+    previous: dict[str, Any] | None = None
+    last_error: Exception | None = None
+    for attempt in range(3):
+        raw = _chat(settings, current_prompt)
+        previous = raw
+        try:
+            return _package_from_raw(raw, settings, sources, strategy)
+        except LocalLLMError as exc:
+            last_error = exc
+            if _is_scene_source_index_error(exc):
+                frozen = raw
+                targeted_error: Exception = exc
+                for _ in range(3):
+                    candidate = _chat(
+                        settings,
+                        _scene_index_repair_prompt(
+                            frozen,
+                            source_payload,
+                            str(targeted_error),
+                        ),
+                    )
+                    try:
+                        repaired = _merge_scene_indices(frozen, candidate)
+                        return _package_from_raw(repaired, settings, sources, strategy)
+                    except LocalLLMError as repair_exc:
+                        targeted_error = repair_exc
+                raise LocalLLMError(
+                    "Scene source_index repair failed after 3 targeted attempts: "
+                    f"{targeted_error}"
+                ) from targeted_error
+            if attempt + 1 < 3:
+                current_prompt = _repair_prompt(initial_prompt, raw, str(exc))
+    detail = str(last_error) if last_error else "unknown validation failure"
+    if previous is None:
+        raise LocalLLMError("Package generation returned no candidate")
+    raise LocalLLMError(f"Package validation failed after 3 attempts: {detail}") from last_error
