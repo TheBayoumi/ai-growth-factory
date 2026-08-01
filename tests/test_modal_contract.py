@@ -100,14 +100,21 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("github.run_id", self.workflow)
         self.assertNotIn("group: modal-gpu-production-verification\n", self.workflow)
 
-    def test_credentials_fail_before_expensive_setup(self):
+    def test_credentials_fail_before_production_setup(self):
         credentials_index = self.workflow.index("Validate persistent Modal credentials")
         python_index = self.workflow.index("Set up Python")
-        install_index = self.workflow.index("Install system dependencies")
+        install_index = self.workflow.index("Install production client and preflight source")
         self.assertLess(credentials_index, python_index)
         self.assertLess(credentials_index, install_index)
         self.assertIn("Verify Modal credential pair", self.workflow)
         self.assertIn("modal token info", self.workflow)
+
+    def test_production_workflow_does_not_duplicate_merge_ci(self):
+        self.assertIn("python -m compileall -q factory cloud", self.workflow)
+        self.assertIn("python scripts/repository_preflight.py", self.workflow)
+        self.assertNotIn("python -m unittest", self.workflow)
+        self.assertNotIn("coverage", self.workflow)
+        self.assertNotIn("Install system dependencies", self.workflow)
 
     def test_artifact_steps_do_not_run_when_canary_was_skipped(self):
         guard = "steps.canary.outcome == 'success' || steps.canary.outcome == 'failure'"
