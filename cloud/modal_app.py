@@ -77,6 +77,7 @@ worker_image = (
             "QWEN_OMNI_ATTENTION": "sdpa",
             "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B",
             "QWEN_OMNI_MAX_NEW_TOKENS": "700",
+            "AUDIO_WPM_TOLERANCE": "15",
             "VIDEO_WIDTH": "1080",
             "VIDEO_HEIGHT": "1920",
             "VIDEO_FPS": "30",
@@ -100,6 +101,9 @@ def _prepare_runtime() -> None:
     Path(WORK_DIR).mkdir(parents=True, exist_ok=True)
     Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
     Path(MODEL_CACHE).mkdir(parents=True, exist_ok=True)
+    from factory.production_runtime import install_production_runtime
+
+    install_production_runtime()
 
 
 @app.function(
