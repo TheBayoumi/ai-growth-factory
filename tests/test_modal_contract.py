@@ -41,14 +41,15 @@ class ModalContractTests(unittest.TestCase):
 
     def test_qwen_omni_runtime_is_complete_and_preflighted(self):
         self.assertIn("torchvision==0.23.0", self.source)
-        self.assertIn('"numpy==2.0.0"', self.source)
+        self.assertIn('"numpy==2.4.6"', self.source)
+        self.assertIn("numba==0.64.0", self.source)
         self.assertIn('"qwen-omni-utils[decord]>=0.0.8"', self.source)
-        self.assertIn("import decord, torch, torchvision", self.source)
+        self.assertIn("import decord, numba, numpy, torch, torchvision", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
-        self.assertIn("Qwen Omni runtime import preflight passed", self.source)
+        self.assertIn("Qwen TTS and Omni runtime import preflight passed", self.source)
         self.assertLess(
-            self.source.index("Qwen Omni runtime import preflight passed"),
+            self.source.index("Qwen TTS and Omni runtime import preflight passed"),
             self.source.index(".env("),
         )
 
