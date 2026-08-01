@@ -1,0 +1,25 @@
+{
+  "request_id": "2026-08-02-first-publishable-batch-attempt-7",
+  "requested_at": "2026-08-02T01:46:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "output": {
+    "aspect_ratio": "9:16",
+    "resolution": "1080x1920",
+    "fps": 30,
+    "privacy": "artifact_only"
+  },
+  "acceptance": {
+    "real_qwen3_tts": true,
+    "real_qwen_omni_review": true,
+    "temporal_stability_required": true,
+    "human_perceptual_review_required": true
+  },
+  "runtime": {
+    "gptqmodel": "5.7.0",
+    "optimum": "2.2.0",
+    "transformers": "4.57.3"
+  },
+  "supersedes": "2026-08-02-first-publishable-batch-attempt-6"
+}
