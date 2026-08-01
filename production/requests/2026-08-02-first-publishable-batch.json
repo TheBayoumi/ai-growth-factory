@@ -1,0 +1,18 @@
+{
+  "request_id": "2026-08-02-first-publishable-batch",
+  "requested_at": "2026-08-02T00:58:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "output": {
+    "aspect_ratio": "9:16",
+    "resolution": "1080x1920",
+    "privacy": "artifact_only"
+  },
+  "acceptance": {
+    "real_qwen3_tts": true,
+    "real_qwen_omni_review": true,
+    "temporal_stability_required": true,
+    "human_perceptual_review_required": true
+  }
+}
