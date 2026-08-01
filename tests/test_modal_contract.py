@@ -67,6 +67,26 @@ class ModalContractTests(unittest.TestCase):
         self.assertLess(probe_index, canary_index)
         self.assertIn("modal-reviewer-probe.txt", self.workflow)
 
+    def test_t4_probe_returns_only_json_native_values(self):
+        expected_strings = (
+            '"torch": str(torch.__version__)',
+            '"torchaudio": str(torchaudio.__version__)',
+            '"torchvision": str(torchvision.__version__)',
+            '"transformers": str(transformers.__version__)',
+            '"numpy": str(numpy.__version__)',
+            '"numba": str(numba.__version__)',
+            '"decord": str(decord.__version__)',
+        )
+        for token in expected_strings:
+            with self.subTest(token=token):
+                self.assertIn(token, self.source)
+        self.assertIn(
+            "[int(value) for value in torch.cuda.get_device_capability(0)]",
+            self.source,
+        )
+        self.assertIn("json.dumps(payload)", self.source)
+        self.assertNotIn('"torch": torch.__version__', self.source)
+
     def test_gptq_build_uses_preinstalled_torch(self):
         self.assertIn(
             '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',
