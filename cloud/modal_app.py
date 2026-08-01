@@ -21,7 +21,7 @@ worker_image = (
         add_python="3.12",
     )
     .entrypoint([])
-    .apt_install("ffmpeg", "libsndfile1", "git")
+    .apt_install("ffmpeg", "libsndfile1", "sox", "libsox-fmt-all", "git")
     .run_commands(
         "python -m pip install --upgrade pip wheel setuptools",
         "python -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128",
@@ -55,7 +55,7 @@ worker_image = (
             "LLAMA_CPP_CONTEXT_TOKENS": "16384",
             "TTS_BACKEND": "qwen3",
             "QWEN_TTS_DEVICE": "cuda:0",
-            "QWEN_TTS_DTYPE": "float16",
+            "QWEN_TTS_DTYPE": "float32",
             "QWEN_TTS_ATTENTION": "sdpa",
             "REVIEWER_BACKEND": "qwen_omni",
             "REVIEWER_REQUIRED": "true",
