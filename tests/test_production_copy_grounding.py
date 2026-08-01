@@ -22,8 +22,10 @@ class ProductionCopyGroundingTests(unittest.TestCase):
             "That matters because spoken requests often combine context, corrections, and follow-up instructions. "
             "The updated interface keeps tool results inside the conversation while preserving explicit control. "
             "Teams can now test failures, retries, and confirmations against a concrete API contract. "
+            "Evaluators also gain repeatable checkpoints for permission handling, malformed arguments, and delayed tool responses before a customer ever sees them. "
             "This is not just shaping the future; it creates a measurable workflow for production voice agents. "
             "The practical question is whether latency and reliability hold under real customer traffic. "
+            "Early deployments should track successful calls, correction rates, and user confirmations instead of relying on polished demos alone. "
             "Follow for the next verified deployment result and the exact numbers that matter."
         )
         package = VideoPackage(
