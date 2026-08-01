@@ -58,7 +58,16 @@ class SourceAttributedLLMTests(unittest.TestCase):
             "narration": " ".join(f"word{index}" for index in range(145)),
             "title": "What changed in AI",
             "description": "Evidence-based summary.",
-            "tags": ["AI", "engineering", "models", "deployment", "research", "tools", "technology", "update"],
+            "tags": [
+                "AI",
+                "engineering",
+                "models",
+                "deployment",
+                "research",
+                "tools",
+                "technology",
+                "update",
+            ],
             "thumbnail_text": "WHAT CHANGED",
             "top_comment": "What would you test first?",
             "source_urls": urls,
@@ -170,7 +179,8 @@ class SourceAttributedLLMTests(unittest.TestCase):
         raw = self._raw_package([0, 1, 0, 1, 0, 5])
 
         def fake_generate(settings, sources, strategy):
-            return local_llm._package_from_raw(raw, settings, sources, strategy)
+            del strategy
+            return local_llm._package_from_raw(settings, sources, raw)
 
         with patch.dict("os.environ", {}, clear=True), patch.object(
             local_llm,
@@ -186,14 +196,18 @@ class SourceAttributedLLMTests(unittest.TestCase):
                 self.strategy,
             )
 
-        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
+        self.assertEqual(
+            [scene.source_index for scene in package.scenes],
+            [0, 1, 0, 1, 0, 1],
+        )
         repair.assert_called_once()
 
     def test_all_nonzero_zero_based_indices_are_not_shifted(self):
         raw = self._raw_package([1, 2, 1, 2, 1, 2], source_count=3)
 
         def fake_generate(settings, sources, strategy):
-            return local_llm._package_from_raw(raw, settings, sources, strategy)
+            del strategy
+            return local_llm._package_from_raw(settings, sources, raw)
 
         with patch.dict("os.environ", {}, clear=True), patch.object(
             local_llm,
@@ -208,7 +222,10 @@ class SourceAttributedLLMTests(unittest.TestCase):
                 self.strategy,
             )
 
-        self.assertEqual([scene.source_index for scene in package.scenes], [1, 2, 1, 2, 1, 2])
+        self.assertEqual(
+            [scene.source_index for scene in package.scenes],
+            [1, 2, 1, 2, 1, 2],
+        )
         repair.assert_not_called()
 
     def test_package_and_normalizer_are_restored_when_generation_raises(self):
