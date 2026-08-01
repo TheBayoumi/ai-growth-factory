@@ -59,6 +59,19 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("modal token new", self.workflow)
         self.assertNotIn("Authorize Modal in browser", self.workflow)
 
+    def test_credentials_fail_before_expensive_setup(self):
+        credentials_index = self.workflow.index("Validate persistent Modal credentials")
+        python_index = self.workflow.index("Set up Python")
+        install_index = self.workflow.index("Install system dependencies")
+        self.assertLess(credentials_index, python_index)
+        self.assertLess(credentials_index, install_index)
+        self.assertIn("Verify Modal credential pair", self.workflow)
+        self.assertIn("modal token info", self.workflow)
+
+    def test_artifact_steps_do_not_run_when_canary_was_skipped(self):
+        guard = "steps.canary.outcome == 'success' || steps.canary.outcome == 'failure'"
+        self.assertGreaterEqual(self.workflow.count(guard), 3)
+
     def test_canary_step_outcome_is_enforced_after_artifact_collection(self):
         self.assertIn("continue-on-error: true", self.workflow)
         self.assertIn('CANARY_STEP_OUTCOME: ${{ steps.canary.outcome }}', self.workflow)
