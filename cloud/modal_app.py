@@ -39,6 +39,7 @@ worker_image = (
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
         "accelerate==1.12.0",
+        "optimum==1.27.0",
         "qwen-omni-utils[decord]>=0.0.8",
     )
     # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
@@ -49,14 +50,16 @@ worker_image = (
         "python -m pip install --no-build-isolation gptqmodel==2.0.0",
         "python -m pip install --force-reinstall numpy==2.4.6 numba==0.64.0",
         (
-            "python -c \"import decord, numba, numpy, torch, torchvision; "
+            "python -c \"import decord, numba, numpy, optimum, torch, torchvision; "
+            "from importlib.metadata import version; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, "
             "Qwen2_5OmniProcessor; "
+            "assert version('optimum') == '1.27.0', version('optimum'); "
             "assert numpy.__version__ == '2.4.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "print('Qwen TTS and Omni runtime import preflight passed')\""
+            "print('Qwen TTS, Optimum, and Omni runtime import preflight passed')\""
         ),
     )
     .env(
@@ -123,10 +126,12 @@ def reviewer_runtime_probe() -> dict[str, object]:
         import decord
         import numba
         import numpy
+        import optimum
         import torch
         import torchaudio
         import torchvision
         import transformers
+        from importlib.metadata import version as package_version
         from qwen_tts import Qwen3TTSModel
         from qwen_omni_utils import process_mm_info
         from transformers import (
@@ -134,6 +139,11 @@ def reviewer_runtime_probe() -> dict[str, object]:
             Qwen2_5OmniProcessor,
         )
 
+        del optimum
+        if package_version("optimum") != "1.27.0":
+            raise RuntimeError(
+                f"Unexpected Optimum version: {package_version('optimum')}"
+            )
         if numpy.__version__ != "2.4.6":
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
         if numba.__version__ != "0.64.0":
@@ -159,6 +169,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
                 "torchaudio": str(torchaudio.__version__),
                 "torchvision": str(torchvision.__version__),
                 "transformers": str(transformers.__version__),
+                "optimum": str(package_version("optimum")),
                 "numpy": str(numpy.__version__),
                 "numba": str(numba.__version__),
                 "decord": str(decord.__version__),
