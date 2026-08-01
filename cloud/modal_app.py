@@ -22,7 +22,17 @@ worker_image = (
         add_python="3.12",
     )
     .entrypoint([])
-    .apt_install("ffmpeg", "libsndfile1", "sox", "libsox-fmt-all", "git")
+    .apt_install(
+        "ffmpeg",
+        "libsndfile1",
+        "sox",
+        "libsox-fmt-all",
+        "git",
+        "clang",
+        "build-essential",
+        "pkg-config",
+        "libpcre2-dev",
+    )
     .run_commands(
         "python -m pip install --upgrade pip wheel setuptools",
         (
@@ -44,8 +54,9 @@ worker_image = (
     )
     # GPTQModel 5.7 exports the METHOD API used by Optimum. Modal image builders
     # do not expose a GPU or nvcc, so disable its optional compiled CUDA extension.
-    # The deployed T4 still executes the Torch/kernel runtime and is validated by
-    # reviewer_runtime_probe before the full canary is allowed to start.
+    # PyPcre is a transitive GPTQModel dependency and builds a native extension on
+    # Python 3.12, so clang, pkg-config and PCRE2 development headers are installed
+    # in the base image before this layer.
     .run_commands(
         "BUILD_CUDA_EXT=0 python -m pip install --no-build-isolation gptqmodel==5.7.0",
         "python -m pip install --force-reinstall numpy==2.2.6 numba==0.64.0",
