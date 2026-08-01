@@ -52,6 +52,16 @@ class ModalContractTests(unittest.TestCase):
             self.source.index(".env("),
         )
 
+    def test_real_t4_reviewer_probe_runs_before_expensive_canary(self):
+        self.assertIn("def reviewer_runtime_probe()", self.source)
+        self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
+        self.assertIn("Qwen reviewer T4 runtime probe failed", self.source)
+        self.assertIn("--reviewer-probe", self.workflow)
+        probe_index = self.workflow.index("Probe T4 reviewer runtime")
+        canary_index = self.workflow.index("Run real render-only production canary")
+        self.assertLess(probe_index, canary_index)
+        self.assertIn("modal-reviewer-probe.txt", self.workflow)
+
     def test_gptq_build_uses_preinstalled_torch(self):
         self.assertIn(
             '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',
@@ -105,6 +115,11 @@ class ModalContractTests(unittest.TestCase):
             'modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary\n',
             self.workflow,
         )
+
+    def test_enforcement_resolves_nested_modal_export_directory(self):
+        self.assertIn("find production-canary -name canary-failure.json", self.workflow)
+        self.assertIn("find production-canary -name canary-result.json", self.workflow)
+        self.assertIn("result_path.parent", self.workflow)
 
     def test_canary_step_outcome_is_enforced_after_artifact_collection(self):
         self.assertIn("continue-on-error: true", self.workflow)

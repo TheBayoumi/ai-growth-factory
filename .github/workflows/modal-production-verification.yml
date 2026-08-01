@@ -68,6 +68,12 @@ jobs:
           MODAL_USE_FACTORY_SECRET: "false"
         run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
 
+      - name: Probe T4 reviewer runtime
+        shell: bash
+        run: |
+          set -o pipefail
+          modal run cloud/modal_app.py --reviewer-probe 2>&1 | tee modal-reviewer-probe.txt
+
       - name: Run real render-only production canary and capture result
         id: canary
         continue-on-error: true
@@ -131,6 +137,7 @@ jobs:
           name: modal-production-canary-${{ github.run_attempt }}
           path: |
             production-canary/
+            modal-reviewer-probe.txt
             modal-canary-result.txt
             canary-id.txt
           if-no-files-found: warn
@@ -144,19 +151,23 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${CANARY_STEP_OUTCOME}" != "success" ]; then
-            if [ -f production-canary/canary-failure.json ]; then
-              cat production-canary/canary-failure.json
+            failure=$(find production-canary -name canary-failure.json -type f -print -quit)
+            if [ -n "${failure}" ]; then
+              cat "${failure}"
             fi
             echo "The real Modal canary process failed." >&2
             exit 1
           fi
-          test -f production-canary/canary-result.json
-          python - <<'PY'
+          result_file=$(find production-canary -name canary-result.json -type f -print -quit)
+          test -n "${result_file}"
+          python - "${result_file}" <<'PY'
           import json
+          import sys
           from pathlib import Path
 
-          root = Path("production-canary")
-          result = json.loads((root / "canary-result.json").read_text(encoding="utf-8"))
+          result_path = Path(sys.argv[1])
+          root = result_path.parent
+          result = json.loads(result_path.read_text(encoding="utf-8"))
           if result.get("status") != "verified_render_canary":
               raise SystemExit(f"Canary was not verified: {result}")
           required = (
