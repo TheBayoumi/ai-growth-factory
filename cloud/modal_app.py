@@ -35,7 +35,11 @@ worker_image = (
         "transformers==4.57.3",
         "accelerate==1.12.0",
         "qwen-omni-utils>=0.0.8",
-        "gptqmodel==2.0.0",
+    )
+    # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
+    # it can see the CUDA-enabled torch installation from the previous image layer.
+    .run_commands(
+        "python -m pip install --no-build-isolation gptqmodel==2.0.0",
     )
     .env(
         {
