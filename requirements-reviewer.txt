@@ -1,5 +1,4 @@
 transformers==4.57.3
 accelerate==1.12.0
-qwen-omni-utils>=0.0.8
-gptqmodel==2.0.0
+qwen-omni-utils[decord]>=0.0.8
 soundfile>=0.12,<0.14
