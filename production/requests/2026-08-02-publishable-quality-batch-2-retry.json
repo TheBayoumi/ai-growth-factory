@@ -1,0 +1,25 @@
+{
+  "request_id": "2026-08-02-publishable-quality-batch-2-retry",
+  "requested_at": "2026-08-02T02:28:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "quality_profile": "publishable_short_form_v2",
+  "output": {
+    "aspect_ratio": "9:16",
+    "resolution": "1080x1920",
+    "fps": 30,
+    "target_seconds": 58,
+    "privacy": "artifact_only"
+  },
+  "acceptance": {
+    "single_concrete_story": true,
+    "narration_words": "130-155",
+    "pace_wpm_min": 140,
+    "phrase_captions": true,
+    "varied_semantic_diagrams": true,
+    "smooth_transitions": true,
+    "complete_runtime_import_preflight": true,
+    "human_perceptual_review_required": true
+  }
+}
