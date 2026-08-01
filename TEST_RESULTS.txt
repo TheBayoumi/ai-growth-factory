@@ -1,0 +1,10 @@
+Prepared release: ai-growth-factory v1.3.1
+
+Local validation:
+- 45 automated unit/integration tests passed.
+- Real FFmpeg portrait render passed.
+- WAV normalization and selective repair passed.
+- Temporal hold-jump rejection passed.
+- Credential/media repository preflight passed.
+
+Repository CI repeats verification only after a pull request merges into main.
