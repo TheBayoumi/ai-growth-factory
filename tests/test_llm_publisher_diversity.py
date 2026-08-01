@@ -75,7 +75,13 @@ class PublisherDiversityTests(unittest.TestCase):
         self.assertIn("at least 2 DISTINCT supplied publishers", prompt)
         self.assertIn("Multiple URLs from one publisher still count as one publisher", prompt)
         self.assertIn("PUBLISHER SOURCE OPTIONS", prompt)
-        self.assertLess(prompt.index('"publisher": "NVIDIA"'), prompt.index('"url": "https://openai.example/2"'))
+        self.assertIn('"source_id": 0, "publisher": "OpenAI"', prompt)
+        self.assertIn('"source_id": 1, "publisher": "NVIDIA"', prompt)
+        self.assertIn('"source_id": 2, "publisher": "Google AI"', prompt)
+        self.assertIn(
+            '"source_id": 3, "publisher": "OpenAI", "title": "OpenAI two"',
+            prompt,
+        )
 
     def test_same_publisher_package_gets_precise_repair_and_can_recover(self):
         invalid = self.package(
