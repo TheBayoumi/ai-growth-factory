@@ -97,10 +97,11 @@ class ProductionMetadataCompletionTests(unittest.TestCase):
 
     def test_modal_numpy_pin_satisfies_gptq_and_numba_ranges(self):
         source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
-        self.assertIn('"numpy==2.4.6"', source)
-        self.assertIn("numpy==2.4.6 numba==0.64.0", source)
+        self.assertIn('"numpy==2.2.6"', source)
+        self.assertIn("numpy==2.2.6 numba==0.64.0", source)
+        self.assertIn("gptqmodel==5.7.0", source)
         self.assertNotIn('"numpy==2.0.0"', source)
-        self.assertNotIn('"numpy==2.4.4"', source)
+        self.assertNotIn('"numpy==2.4.6"', source)
 
 
 if __name__ == "__main__":
