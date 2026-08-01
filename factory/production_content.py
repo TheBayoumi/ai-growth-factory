@@ -3,10 +3,11 @@ from __future__ import annotations
 import contextvars
 import re
 from collections import Counter
+from dataclasses import replace
 from typing import Any
 
 from .feeds import SourceItem
-from .models import VideoPackage
+from .models import Scene, VideoPackage
 
 
 _INSTALLED = False
@@ -68,6 +69,86 @@ def _selected_sources(
     return [by_url[url] for url in package.source_urls if url in by_url]
 
 
+def _short_subject(source: SourceItem) -> str:
+    clean = " ".join(source.title.replace("|", " ").replace(":", " ").split())
+    words = clean.split()
+    subject = " ".join(words[:7]).strip(" -—:;,.!")
+    if not subject:
+        subject = source.publisher.strip()
+    return subject[:64].rstrip(" -—:;,.")
+
+
+def _replace_phrase(text: str, phrase: str, replacement: str) -> str:
+    return re.sub(re.escape(phrase), replacement, text, flags=re.IGNORECASE)
+
+
+def _ground_generic_copy(
+    package: VideoPackage,
+    sources: list[SourceItem],
+) -> VideoPackage:
+    """Replace generic slogans with the concrete, already-validated source subject."""
+    selected = _selected_sources(package, sources)
+    if not selected:
+        return package
+    primary = selected[0]
+    subject = _short_subject(primary)
+    publisher = primary.publisher.strip()
+    replacements = {
+        "ai advancements": subject,
+        "advancements in ai": subject,
+        "future of ai": subject,
+        "shaping the future": f"changing how {subject} is used",
+        "leading advancements": f"new work on {subject}",
+        "more effective, ethical, and accessible": "more measurable and easier to evaluate",
+        "scientific research and workforce readiness": subject,
+    }
+
+    def edit(text: str) -> str:
+        edited = text
+        for phrase, replacement in replacements.items():
+            edited = _replace_phrase(edited, phrase, replacement)
+        return " ".join(edited.split())
+
+    title = edit(package.title)
+    source_specific = _tokens(primary.title) | _tokens(primary.publisher)
+    if not (_tokens(title) & source_specific):
+        title = f"{publisher}: {subject}"
+    if len(title) < 28:
+        title = f"{title} — What Changed"
+    title = title[:78].rstrip(" -—:;,.")
+
+    narration = edit(package.narration)
+    sentences = re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=1)
+    if sentences and not (_tokens(sentences[0]) & source_specific):
+        concrete_hook = f"{publisher} just detailed {subject}, and the change matters now."
+        narration = " ".join([concrete_hook, *sentences[1:]])
+
+    thumbnail = edit(package.thumbnail_text)
+    if not (_tokens(thumbnail) & source_specific):
+        thumbnail = " ".join(subject.split()[:5])
+    thumbnail = thumbnail[:45].rstrip(" -—:;,.")
+
+    scenes = [
+        replace(
+            scene,
+            heading=edit(scene.heading)[:60],
+            body=edit(scene.body)[:180],
+            visual=edit(scene.visual)[:400],
+        )
+        for scene in package.scenes
+    ]
+    return replace(
+        package,
+        topic=edit(package.topic),
+        narration=narration,
+        title=title,
+        description=edit(package.description),
+        thumbnail_text=thumbnail,
+        top_comment=edit(package.top_comment),
+        scenes=scenes,
+    )
+
+
 def _validate_publishable_content(
     package: VideoPackage,
     sources: list[SourceItem],
@@ -124,7 +205,7 @@ def _validate_publishable_content(
 
 
 def install_production_content_gate() -> None:
-    """Strengthen prompts and retry packages that are valid but not publishable."""
+    """Strengthen prompts, ground generic copy, and retry non-publishable packages."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -165,6 +246,7 @@ def install_production_content_gate() -> None:
                 package = original_generate(settings, sources, strategy)
             finally:
                 _FEEDBACK.reset(token)
+            package = _ground_generic_copy(package, sources)
             try:
                 _validate_publishable_content(package, sources)
                 return package
