@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import fetch_recent, publishers
+from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
 from .local_llm import generate_package
 from .policy import reward, select_strategy
@@ -64,12 +64,19 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             _persist_run_record(settings, result)
             return result
 
-    sources = fetch_recent(max_age_hours=settings.max_source_age_hours)
-    if len(publishers(sources)) < settings.min_primary_sources:
+    selection = fetch_diverse_recent(
+        max_age_hours=settings.max_source_age_hours,
+        min_publishers=settings.min_primary_sources,
+        fetcher=fetch_recent,
+    )
+    sources = list(selection.items)
+    if selection.publisher_count < settings.min_primary_sources:
         result = {
             "status": "evidence_skip",
             "reason": "Not enough fresh primary-source publishers",
             "source_count": len(sources),
+            "publisher_count": selection.publisher_count,
+            "source_max_age_hours": selection.max_age_hours,
         }
         _persist_run_record(settings, result)
         return result
@@ -88,6 +95,7 @@ def run_factory(settings: Settings) -> dict[str, Any]:
         result = {
             "status": "evidence_skip",
             "reason": "Generated package did not use enough independent primary publishers",
+            "source_max_age_hours": selection.max_age_hours,
         }
         _persist_run_record(settings, result)
         return result
@@ -134,6 +142,7 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             "strategy": strategy.key,
             "strategy_tag": strategy.tag,
             "source_urls": package.source_urls,
+            "source_max_age_hours": selection.max_age_hours,
             "mature_observations": len(mature),
             "voice": {
                 "generator": settings.qwen_tts_model,
