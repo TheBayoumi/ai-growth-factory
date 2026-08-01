@@ -9,7 +9,7 @@ description = "Free-first autonomous cloud video pipeline with narration-synced 
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "requests==2.32.5",
-  "Pillow==11.3.1",
+  "Pillow==11.3.0",
   "imageio-ffmpeg==0.6.0",
 ]
 
