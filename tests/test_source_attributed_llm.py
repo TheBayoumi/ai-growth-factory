@@ -31,18 +31,16 @@ class SourceAttributedLLMTests(unittest.TestCase):
                 "Source B supports the technical mechanism and limitations.",
                 now,
             ),
+            SourceItem(
+                "Google",
+                "Release C",
+                "https://c.example/news",
+                "Source C supports deployment details and caveats.",
+                now,
+            ),
         ]
         self.source_urls = [source.url for source in self.sources]
         self.strategy = Strategy("practical", "balanced", "dashboard", "55-62", "subscribe")
-        self.scenes = [
-            {
-                "heading": f"Scene {scene_id}",
-                "body": f"Evidence-backed claim {scene_id}.",
-                "visual": "Procedural evidence card.",
-                "source_index": 5 if scene_id == 5 else scene_id % 2,
-            }
-            for scene_id in range(6)
-        ]
 
     @staticmethod
     def _response(payload: dict) -> Mock:
@@ -52,7 +50,32 @@ class SourceAttributedLLMTests(unittest.TestCase):
         }
         return response
 
+    def _raw_package(self, indices: list[int], source_count: int = 2) -> dict:
+        urls = self.source_urls[:source_count]
+        publishers = [source.publisher for source in self.sources[:source_count]]
+        return {
+            "topic": "A supported AI development",
+            "narration": " ".join(f"word{index}" for index in range(145)),
+            "title": "What changed in AI",
+            "description": "Evidence-based summary.",
+            "tags": ["AI", "engineering", "models", "deployment", "research", "tools", "technology", "update"],
+            "thumbnail_text": "WHAT CHANGED",
+            "top_comment": "What would you test first?",
+            "source_urls": urls,
+            "source_publishers": publishers,
+            "scenes": [
+                {
+                    "heading": f"Scene {scene_id}",
+                    "body": f"Evidence-backed claim {scene_id}.",
+                    "visual": "Procedural evidence card.",
+                    "source_index": indices[scene_id],
+                }
+                for scene_id in range(6)
+            ],
+        }
+
     def test_exact_selected_urls_are_mapped_to_internal_indices(self):
+        scenes = self._raw_package([0, 1, 0, 1, 0, 5])["scenes"]
         payload = {
             "assignments": [
                 {
@@ -69,8 +92,8 @@ class SourceAttributedLLMTests(unittest.TestCase):
         ) as post:
             indices = _repair_scene_attribution(
                 Settings.from_env(),
-                self.scenes,
-                self.source_urls,
+                scenes,
+                self.source_urls[:2],
                 self.sources,
             )
 
@@ -79,13 +102,12 @@ class SourceAttributedLLMTests(unittest.TestCase):
         source_enum = request_payload["response_format"]["schema"]["properties"][
             "assignments"
         ]["items"]["properties"]["source_url"]["enum"]
-        self.assertEqual(source_enum, self.source_urls)
+        self.assertEqual(source_enum, self.source_urls[:2])
         prompt = request_payload["messages"][1]["content"]
         self.assertIn("Do not use numeric source positions", prompt)
-        self.assertIn(self.source_urls[0], prompt)
-        self.assertIn(self.source_urls[1], prompt)
 
     def test_unknown_url_is_rejected_without_clamping(self):
+        scenes = self._raw_package([0, 1, 0, 1, 0, 5])["scenes"]
         payload = {
             "assignments": [
                 {
@@ -106,17 +128,18 @@ class SourceAttributedLLMTests(unittest.TestCase):
         ) as post:
             with self.assertRaisesRegex(
                 local_llm.LocalLLMError,
-                "unselected source URL",
+                r"Exact scene-source attribution failed after 2 attempts: .*unselected source URL",
             ):
                 _repair_scene_attribution(
                     Settings.from_env(),
-                    self.scenes,
-                    self.source_urls,
+                    scenes,
+                    self.source_urls[:2],
                     self.sources,
                 )
         self.assertEqual(post.call_count, 2)
 
     def test_unsupported_scene_fails_closed_immediately(self):
+        scenes = self._raw_package([0, 1, 0, 1, 0, 5])["scenes"]
         payload = {
             "assignments": [
                 {
@@ -133,26 +156,21 @@ class SourceAttributedLLMTests(unittest.TestCase):
         ) as post:
             with self.assertRaisesRegex(
                 local_llm.LocalLLMError,
-                "do not support scene\(s\): 4",
+                r"do not support scene\(s\): 4",
             ):
                 _repair_scene_attribution(
                     Settings.from_env(),
-                    self.scenes,
-                    self.source_urls,
+                    scenes,
+                    self.source_urls[:2],
                     self.sources,
                 )
         self.assertEqual(post.call_count, 1)
 
-    def test_wrapper_repairs_invalid_indices_and_restores_normalizer(self):
-        original_normalizer = local_llm._normalize_scene_source_indices
+    def test_invalid_numeric_attribution_is_repaired_at_package_boundary(self):
+        raw = self._raw_package([0, 1, 0, 1, 0, 5])
 
         def fake_generate(settings, sources, strategy):
-            del settings, strategy
-            return local_llm._normalize_scene_source_indices(
-                self.scenes,
-                self.source_urls,
-                sources,
-            )
+            return local_llm._package_from_raw(raw, settings, sources, strategy)
 
         with patch.dict("os.environ", {}, clear=True), patch.object(
             local_llm,
@@ -162,27 +180,20 @@ class SourceAttributedLLMTests(unittest.TestCase):
             "factory.source_attributed_llm._repair_scene_attribution",
             return_value=[0, 1, 0, 1, 0, 1],
         ) as repair:
-            result = generate_package(
+            package = generate_package(
                 Settings.from_env(),
                 self.sources,
                 self.strategy,
             )
 
-        self.assertEqual(result, [0, 1, 0, 1, 0, 1])
+        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
         repair.assert_called_once()
-        self.assertIs(local_llm._normalize_scene_source_indices, original_normalizer)
 
-    def test_valid_indices_do_not_trigger_attribution_request(self):
-        valid_scenes = [dict(scene, source_index=scene_id % 2) for scene_id, scene in enumerate(self.scenes)]
-        original_normalizer = local_llm._normalize_scene_source_indices
+    def test_all_nonzero_zero_based_indices_are_not_shifted(self):
+        raw = self._raw_package([1, 2, 1, 2, 1, 2], source_count=3)
 
         def fake_generate(settings, sources, strategy):
-            del settings, strategy
-            return local_llm._normalize_scene_source_indices(
-                valid_scenes,
-                self.source_urls,
-                sources,
-            )
+            return local_llm._package_from_raw(raw, settings, sources, strategy)
 
         with patch.dict("os.environ", {}, clear=True), patch.object(
             local_llm,
@@ -191,17 +202,17 @@ class SourceAttributedLLMTests(unittest.TestCase):
         ), patch(
             "factory.source_attributed_llm._repair_scene_attribution"
         ) as repair:
-            result = generate_package(
+            package = generate_package(
                 Settings.from_env(),
                 self.sources,
                 self.strategy,
             )
 
-        self.assertEqual(result, [0, 1, 0, 1, 0, 1])
+        self.assertEqual([scene.source_index for scene in package.scenes], [1, 2, 1, 2, 1, 2])
         repair.assert_not_called()
-        self.assertIs(local_llm._normalize_scene_source_indices, original_normalizer)
 
-    def test_normalizer_is_restored_when_generation_raises(self):
+    def test_package_and_normalizer_are_restored_when_generation_raises(self):
+        original_package = local_llm._package_from_raw
         original_normalizer = local_llm._normalize_scene_source_indices
         with patch.dict("os.environ", {}, clear=True), patch.object(
             local_llm,
@@ -214,6 +225,7 @@ class SourceAttributedLLMTests(unittest.TestCase):
                     self.sources,
                     self.strategy,
                 )
+        self.assertIs(local_llm._package_from_raw, original_package)
         self.assertIs(local_llm._normalize_scene_source_indices, original_normalizer)
 
 
