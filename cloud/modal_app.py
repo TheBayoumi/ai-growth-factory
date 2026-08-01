@@ -117,7 +117,7 @@ def _prepare_runtime() -> None:
     max_containers=1,
 )
 def reviewer_runtime_probe() -> dict[str, object]:
-    """Verify the exact production import order inside a real T4 container."""
+    """Verify the production imports and return only JSON-safe primitives."""
     _prepare_runtime()
     try:
         import decord
@@ -143,22 +143,31 @@ def reviewer_runtime_probe() -> dict[str, object]:
         del process_mm_info
         del Qwen2_5OmniForConditionalGeneration
         del Qwen2_5OmniProcessor
-        return {
+        probe = {
             "ok": True,
             "cuda_available": bool(torch.cuda.is_available()),
-            "cuda_capability": list(torch.cuda.get_device_capability(0))
+            "cuda_capability": [
+                int(value) for value in torch.cuda.get_device_capability(0)
+            ]
+            if torch.cuda.is_available()
+            else None,
+            "gpu_name": str(torch.cuda.get_device_name(0))
             if torch.cuda.is_available()
             else None,
             "versions": {
-                "torch": torch.__version__,
-                "torchaudio": torchaudio.__version__,
-                "torchvision": torchvision.__version__,
-                "transformers": transformers.__version__,
-                "numpy": numpy.__version__,
-                "numba": numba.__version__,
-                "decord": decord.__version__,
+                "torch": str(torch.__version__),
+                "torchaudio": str(torchaudio.__version__),
+                "torchvision": str(torchvision.__version__),
+                "transformers": str(transformers.__version__),
+                "numpy": str(numpy.__version__),
+                "numba": str(numba.__version__),
+                "decord": str(decord.__version__),
             },
         }
+        # Modal serializes return values for the local GitHub runner. Round-trip
+        # through JSON so framework-specific objects such as torch.torch_version.TorchVersion
+        # can never require Torch during local deserialization.
+        return json.loads(json.dumps(probe, default=str))
     except Exception as exc:
         raise RuntimeError(
             "Qwen reviewer T4 runtime probe failed: "
