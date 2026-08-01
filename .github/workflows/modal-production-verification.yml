@@ -30,6 +30,19 @@ jobs:
         with:
           ref: main
 
+      - name: Validate persistent Modal credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MODAL_TOKEN_ID:-}" || {
+            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+          test -n "${MODAL_TOKEN_SECRET:-}" || {
+            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -47,18 +60,8 @@ jobs:
           python -m unittest discover -s tests -v
           python scripts/repository_preflight.py
 
-      - name: Validate persistent Modal credentials
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${MODAL_TOKEN_ID:-}" || {
-            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
-            exit 1
-          }
-          test -n "${MODAL_TOKEN_SECRET:-}" || {
-            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
-            exit 1
-          }
+      - name: Verify Modal credential pair
+        run: modal token info
 
       - name: Deploy T4 production worker
         env:
@@ -74,7 +77,7 @@ jobs:
           modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-canary-result.txt
 
       - name: Resolve canary artifact identifier
-        if: always()
+        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
         shell: bash
         run: |
           python - <<'PY'
@@ -115,7 +118,7 @@ jobs:
           modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary
 
       - name: Upload production canary artifact
-        if: always()
+        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
           name: modal-production-canary-${{ github.run_attempt }}
@@ -127,7 +130,7 @@ jobs:
           retention-days: 30
 
       - name: Enforce canary success
-        if: always()
+        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
         shell: bash
         env:
           CANARY_STEP_OUTCOME: ${{ steps.canary.outcome }}
