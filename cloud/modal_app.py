@@ -43,14 +43,20 @@ worker_image = (
     )
     # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
     # it can see the CUDA-enabled torch installation from the previous image layer.
+    # gptqmodel may also upgrade NumPy transitively, so the final runtime layer pins
+    # the newest Numba-supported NumPy 2.4 release before importing Qwen TTS.
     .run_commands(
         "python -m pip install --no-build-isolation gptqmodel==2.0.0",
+        "python -m pip install --force-reinstall numpy==2.4.6 numba==0.64.0",
         (
-            "python -c \"import decord, torch, torchvision; "
+            "python -c \"import decord, numba, numpy, torch, torchvision; "
+            "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, "
             "Qwen2_5OmniProcessor; "
-            "print('Qwen Omni runtime import preflight passed')\""
+            "assert numpy.__version__ == '2.4.6', numpy.__version__; "
+            "assert numba.__version__ == '0.64.0', numba.__version__; "
+            "print('Qwen TTS and Omni runtime import preflight passed')\""
         ),
     )
     .env(
@@ -75,6 +81,10 @@ worker_image = (
             "QWEN_OMNI_DTYPE": "float16",
             "QWEN_OMNI_ATTENTION": "sdpa",
             "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4",
+            "VIDEO_WIDTH": "1080",
+            "VIDEO_HEIGHT": "1920",
+            "VIDEO_FPS": "30",
+            "TARGET_SECONDS": "58",
             "PUBLISH_ENABLED": "false",
             "YOUTUBE_PRIVACY_STATUS": "private",
             "TIMEZONE_NAME": "Africa/Cairo",
@@ -111,6 +121,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
     _prepare_runtime()
     try:
         import decord
+        import numba
         import numpy
         import torch
         import torchaudio
@@ -122,6 +133,11 @@ def reviewer_runtime_probe() -> dict[str, object]:
             Qwen2_5OmniForConditionalGeneration,
             Qwen2_5OmniProcessor,
         )
+
+        if numpy.__version__ != "2.4.6":
+            raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
+        if numba.__version__ != "0.64.0":
+            raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
 
         del Qwen3TTSModel
         del process_mm_info
@@ -139,6 +155,7 @@ def reviewer_runtime_probe() -> dict[str, object]:
                 "torchvision": torchvision.__version__,
                 "transformers": transformers.__version__,
                 "numpy": numpy.__version__,
+                "numba": numba.__version__,
                 "decord": decord.__version__,
             },
         }
