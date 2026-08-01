@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -10,8 +10,10 @@ from .audio_qc import (
     analyze_audio,
     concatenate_segments,
     convert_for_reviewer,
+    correct_audio_tempo,
     normalize_audio,
     split_narration,
+    tempo_correction_factor,
     write_manifest,
 )
 from .config import Settings
@@ -61,9 +63,17 @@ def _seed(text: str, segment_id: int, attempt: int) -> int:
 def _global_repair(metrics: AudioMetrics, target_wpm: int) -> str:
     corrections: list[str] = []
     if metrics.estimated_wpm < target_wpm:
-        corrections.append("Increase the speaking pace slightly while preserving clarity")
+        increase = max(5, min(50, round((target_wpm / max(metrics.estimated_wpm, 1.0) - 1) * 100)))
+        corrections.append(
+            f"Increase the speaking pace by about {increase}% while preserving clarity; "
+            f"target approximately {target_wpm} words per minute"
+        )
     elif metrics.estimated_wpm > target_wpm:
-        corrections.append("Reduce the speaking pace slightly and articulate technical terms")
+        reduction = max(5, min(50, round((1 - target_wpm / metrics.estimated_wpm) * 100)))
+        corrections.append(
+            f"Reduce the speaking pace by about {reduction}% and target approximately "
+            f"{target_wpm} words per minute while articulating technical terms"
+        )
     if metrics.max_silence_seconds > 1.25 or metrics.silence_ratio > 0.28:
         corrections.append("Use shorter pauses and avoid dead air")
     if metrics.rms_dbfs < -32:
@@ -87,6 +97,25 @@ def _threshold_repair(review: AudioReview) -> str:
     if not corrections:
         corrections.append("Increase overall publication quality while preserving the exact transcript")
     return ". ".join(corrections) + "."
+
+
+def _pace_is_only_failure(metrics: AudioMetrics) -> bool:
+    return len(metrics.failures) == 1 and metrics.failures[0].startswith("estimated pace ")
+
+
+def _retime_segments(
+    segments: list[NarrationSegment],
+    *,
+    tempo_factor: float,
+) -> list[NarrationSegment]:
+    return [
+        replace(
+            segment,
+            start_seconds=segment.start_seconds / tempo_factor,
+            end_seconds=segment.end_seconds / tempo_factor,
+        )
+        for segment in segments
+    ]
 
 
 def _unload(provider: object | None) -> None:
@@ -177,6 +206,45 @@ def build_reviewed_narration(
         metrics = analyze_audio(
             normalized, narration=narration, settings=settings, target_wpm=contract.target_wpm
         )
+
+        if not metrics.passed and _pace_is_only_failure(metrics):
+            factor = tempo_correction_factor(
+                estimated_wpm=metrics.estimated_wpm,
+                target_wpm=contract.target_wpm,
+                tolerance=settings.audio_wpm_tolerance,
+            )
+            if factor is not None:
+                tempo_audio = workdir / f"voice-tempo-attempt-{attempt}.wav"
+                correct_audio_tempo(normalized, tempo_audio, factor=factor)
+                corrected = workdir / f"voice-tempo-normalized-attempt-{attempt}.wav"
+                normalize_audio(
+                    tempo_audio,
+                    corrected,
+                    target_lufs=settings.audio_target_lufs,
+                    peak_dbfs=settings.audio_peak_limit_dbfs,
+                )
+                corrected_metrics = analyze_audio(
+                    corrected,
+                    narration=narration,
+                    settings=settings,
+                    target_wpm=contract.target_wpm,
+                )
+                corrected_segments = _retime_segments(timed_segments, tempo_factor=factor)
+                review_history.append(
+                    {
+                        "attempt": attempt,
+                        "type": "deterministic_tempo_correction",
+                        "factor": round(factor, 6),
+                        "before_wpm": round(metrics.estimated_wpm, 3),
+                        "after_wpm": round(corrected_metrics.estimated_wpm, 3),
+                        "decision": "accept" if corrected_metrics.passed else "reject",
+                        "failures": list(corrected_metrics.failures),
+                    }
+                )
+                normalized = corrected
+                metrics = corrected_metrics
+                timed_segments = corrected_segments
+
         final_metrics = metrics
         final_segments = timed_segments
 
