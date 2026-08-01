@@ -115,7 +115,14 @@ jobs:
         run: |
           set -euo pipefail
           canary_id=$(cat canary-id.txt)
-          modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary
+          rm -rf production-canary
+          mkdir -p production-canary
+          modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-canary/
+          test -n "$(find production-canary -type f -print -quit)" || {
+            echo "Modal volume download produced no canary files." >&2
+            exit 1
+          }
+          find production-canary -type f -print | sort
 
       - name: Upload production canary artifact
         if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')

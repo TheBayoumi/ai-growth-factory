@@ -79,6 +79,20 @@ class ModalContractTests(unittest.TestCase):
         guard = "steps.canary.outcome == 'success' || steps.canary.outcome == 'failure'"
         self.assertGreaterEqual(self.workflow.count(guard), 3)
 
+    def test_modal_volume_download_materializes_directory_contents(self):
+        self.assertIn("rm -rf production-canary", self.workflow)
+        self.assertIn("mkdir -p production-canary", self.workflow)
+        self.assertIn(
+            'modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-canary/',
+            self.workflow,
+        )
+        self.assertIn("find production-canary -type f -print -quit", self.workflow)
+        self.assertIn("find production-canary -type f -print | sort", self.workflow)
+        self.assertNotIn(
+            'modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary\n',
+            self.workflow,
+        )
+
     def test_canary_step_outcome_is_enforced_after_artifact_collection(self):
         self.assertIn("continue-on-error: true", self.workflow)
         self.assertIn('CANARY_STEP_OUTCOME: ${{ steps.canary.outcome }}', self.workflow)
