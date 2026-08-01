@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import fetch_recent, publishers
+from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
 from .local_llm import generate_package
 from .policy import Strategy
@@ -66,11 +66,17 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
     workdir = Path(tempfile.mkdtemp(prefix="canary-run-", dir=settings.work_root))
 
     try:
-        sources = fetch_recent(max_age_hours=settings.max_source_age_hours)
-        source_publishers = publishers(sources)
-        if len(source_publishers) < settings.min_primary_sources:
+        selection = fetch_diverse_recent(
+            max_age_hours=settings.max_source_age_hours,
+            min_publishers=settings.min_primary_sources,
+            fetcher=fetch_recent,
+        )
+        sources = list(selection.items)
+        source_publishers = set(selection.publishers)
+        if selection.publisher_count < settings.min_primary_sources:
             raise RuntimeError(
-                f"Canary found only {len(source_publishers)} primary publishers; "
+                f"Canary found only {selection.publisher_count} primary publishers "
+                f"within {selection.max_age_hours} hours; "
                 f"required {settings.min_primary_sources}"
             )
 
@@ -119,6 +125,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
         package_payload = asdict(package)
         package_payload["strategy"] = asdict(CANARY_STRATEGY)
         package_payload["source_feed_publishers"] = sorted(source_publishers)
+        package_payload["source_max_age_hours"] = selection.max_age_hours
         (destination / "package.json").write_text(
             json.dumps(package_payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -136,6 +143,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             "title": package.title,
             "strategy": CANARY_STRATEGY.key,
             "source_urls": package.source_urls,
+            "source_max_age_hours": selection.max_age_hours,
             "voice": {
                 "generator": settings.qwen_tts_model,
                 "reviewer": settings.reviewer_model,
