@@ -52,10 +52,27 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
-        success_marker = "Qwen TTS and Omni runtime import preflight passed"
+        success_marker = "Qwen TTS and GPTQ Omni runtime preflight passed"
         self.assertIn(success_marker, self.source)
         self.assertLess(self.source.index(final_pin), self.source.index(success_marker))
         self.assertLess(self.source.index(success_marker), self.source.index(".env("))
+
+    def test_gptq_omni_load_path_requires_optimum(self):
+        self.assertIn('"optimum==2.2.0"', self.source)
+        self.assertIn("from transformers.utils import is_optimum_available", self.source)
+        self.assertIn(
+            "assert version('optimum') == '2.2.0', version('optimum')",
+            self.source,
+        )
+        self.assertIn(
+            "assert is_optimum_available(), 'Transformers cannot detect Optimum'",
+            self.source,
+        )
+        self.assertIn('"optimum": str(package_version("optimum"))', self.source)
+        self.assertLess(
+            self.source.index('"optimum==2.2.0"'),
+            self.source.index("gptqmodel==2.0.0"),
+        )
 
     def test_real_t4_reviewer_probe_runs_before_expensive_canary(self):
         self.assertIn("def reviewer_runtime_probe()", self.source)
