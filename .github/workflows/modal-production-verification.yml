@@ -10,11 +10,11 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'modal-gpu-production-verification-v2' || format('modal-gpu-nonverification-{0}', github.run_id) }}
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'modal-gpu-production-verification-v3' || format('modal-gpu-nonverification-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
-  deploy-canary:
+  produce-video:
     if: >-
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
@@ -35,11 +35,11 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${MODAL_TOKEN_ID:-}" || {
-            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
+            echo "MODAL_TOKEN_ID is missing from modal-production." >&2
             exit 1
           }
           test -n "${MODAL_TOKEN_SECRET:-}" || {
-            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
+            echo "MODAL_TOKEN_SECRET is missing from modal-production." >&2
             exit 1
           }
 
@@ -59,27 +59,21 @@ jobs:
       - name: Verify Modal credential pair
         run: modal token info
 
-      - name: Deploy T4 production worker
+      - name: Deploy A10 production worker
         env:
           MODAL_USE_FACTORY_SECRET: "false"
         run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
 
-      - name: Probe T4 reviewer runtime
-        shell: bash
-        run: |
-          set -o pipefail
-          modal run cloud/modal_app.py --reviewer-probe 2>&1 | tee modal-reviewer-probe.txt
-
-      - name: Run real render-only production canary and capture result
-        id: canary
+      - name: Generate real platform-ready video and capture result
+        id: production
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
-          modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-canary-result.txt
+          modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-production-result.txt
 
-      - name: Resolve canary artifact identifier
-        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
+      - name: Resolve production artifact identifier
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
         run: |
           python - <<'PY'
@@ -87,9 +81,9 @@ jobs:
           import re
           from pathlib import Path
 
-          result_path = Path("modal-canary-result.txt")
+          result_path = Path("modal-production-result.txt")
           if not result_path.exists():
-              raise SystemExit("Modal canary output was not created")
+              raise SystemExit("Modal production output was not created")
           text = result_path.read_text(encoding="utf-8", errors="replace")
           candidates = []
           for line in text.splitlines():
@@ -106,7 +100,7 @@ jobs:
               matches = re.findall(r'"canary_id"\s*:\s*"([^"]+)"', text)
               canary_id = matches[-1] if matches else ""
           if not canary_id:
-              raise SystemExit("Could not resolve canary_id from Modal output")
+              raise SystemExit("Could not resolve production artifact ID")
           Path("canary-id.txt").write_text(canary_id, encoding="utf-8")
           print(canary_id)
           PY
@@ -117,44 +111,43 @@ jobs:
         run: |
           set -euo pipefail
           canary_id=$(cat canary-id.txt)
-          rm -rf production-canary
-          mkdir -p production-canary
-          modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-canary/
-          test -n "$(find production-canary -type f -print -quit)" || {
-            echo "Modal volume download produced no canary files." >&2
+          rm -rf production-video
+          mkdir -p production-video
+          modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-video/
+          test -n "$(find production-video -type f -print -quit)" || {
+            echo "Modal volume download produced no files." >&2
             exit 1
           }
-          find production-canary -type f -print | sort
+          find production-video -type f -print | sort
 
-      - name: Upload production canary artifact
-        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
+      - name: Upload production video artifact
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
-          name: modal-production-canary-${{ github.run_attempt }}
+          name: platform-ready-production-video-${{ github.run_attempt }}
           path: |
-            production-canary/
-            modal-reviewer-probe.txt
-            modal-canary-result.txt
+            production-video/
+            modal-production-result.txt
             canary-id.txt
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Enforce canary success
-        if: always() && (steps.canary.outcome == 'success' || steps.canary.outcome == 'failure')
+      - name: Enforce production output completeness
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
         env:
-          CANARY_STEP_OUTCOME: ${{ steps.canary.outcome }}
+          PRODUCTION_STEP_OUTCOME: ${{ steps.production.outcome }}
         run: |
           set -euo pipefail
-          if [ "${CANARY_STEP_OUTCOME}" != "success" ]; then
-            failure=$(find production-canary -name canary-failure.json -type f -print -quit)
+          if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
+            failure=$(find production-video -name canary-failure.json -type f -print -quit)
             if [ -n "${failure}" ]; then
               cat "${failure}"
             fi
-            echo "The real Modal canary process failed." >&2
+            echo "The real Modal production process failed." >&2
             exit 1
           fi
-          result_file=$(find production-canary -name canary-result.json -type f -print -quit)
+          result_file=$(find production-video -name canary-result.json -type f -print -quit)
           test -n "${result_file}"
           python - "${result_file}" <<'PY'
           import json
@@ -165,16 +158,17 @@ jobs:
           root = result_path.parent
           result = json.loads(result_path.read_text(encoding="utf-8"))
           if result.get("status") != "verified_render_canary":
-              raise SystemExit(f"Canary was not verified: {result}")
+              raise SystemExit(f"Production output was not verified: {result}")
           required = (
               "video.mp4",
               "narration.wav",
+              "thumbnail.png",
               "voice-review-manifest.json",
               "video-qc-report.json",
               "package.json",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
-              raise SystemExit("Canary artifact is incomplete: " + ", ".join(missing))
+              raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
           print(json.dumps(result, indent=2, ensure_ascii=False))
           PY
