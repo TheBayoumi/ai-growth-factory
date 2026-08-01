@@ -42,12 +42,12 @@ worker_image = (
         "optimum==2.2.0",
         "qwen-omni-utils[decord]>=0.0.8",
     )
-    # GPTQModel's build metadata imports torch. Disable PEP 517 build isolation so
-    # it can see the CUDA-enabled torch installation from the previous image layer.
-    # Version 5.7.0 is the integration-compatible line for Transformers 4.57.x and
-    # exports the METHOD API consumed by Optimum's GPTQ loader.
+    # GPTQModel 5.7 exports the METHOD API used by Optimum. Modal image builders
+    # do not expose a GPU or nvcc, so disable its optional compiled CUDA extension.
+    # The deployed T4 still executes the Torch/kernel runtime and is validated by
+    # reviewer_runtime_probe before the full canary is allowed to start.
     .run_commands(
-        "python -m pip install --no-build-isolation gptqmodel==5.7.0",
+        "BUILD_CUDA_EXT=0 python -m pip install --no-build-isolation gptqmodel==5.7.0",
         "python -m pip install --force-reinstall numpy==2.2.6 numba==0.64.0",
         (
             "python -c \"from importlib.metadata import version; "
@@ -62,6 +62,8 @@ worker_image = (
             "assert version('gptqmodel') == '5.7.0', version('gptqmodel'); "
             "assert version('optimum') == '2.2.0', version('optimum'); "
             "assert is_optimum_available(), 'Transformers cannot detect Optimum'; "
+            "assert METHOD.GPTQ is not None, 'GPTQModel METHOD.GPTQ is unavailable'; "
+            "assert GPTQQuantizer is not None, 'Optimum GPTQQuantizer is unavailable'; "
             "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
             "print('Qwen TTS and Optimum GPTQ integration preflight passed')\""
@@ -145,7 +147,9 @@ def reviewer_runtime_probe() -> dict[str, object]:
             Qwen2_5OmniForConditionalGeneration,
             Qwen2_5OmniProcessor,
         )
+        from transformers.quantizers.quantizer_gptq import GptqHfQuantizer
         from transformers.utils import is_optimum_available
+        from transformers.utils.quantization_config import GPTQConfig
 
         if numpy.__version__ != "2.2.6":
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
@@ -161,7 +165,13 @@ def reviewer_runtime_probe() -> dict[str, object]:
             )
         if not is_optimum_available():
             raise RuntimeError("Transformers cannot detect the Optimum installation")
+        if METHOD.GPTQ is None or GPTQQuantizer is None:
+            raise RuntimeError("GPTQModel METHOD or Optimum GPTQQuantizer is unavailable")
 
+        quantizer = GptqHfQuantizer(GPTQConfig(bits=4))
+        quantizer.validate_environment()
+
+        del quantizer
         del METHOD
         del GPTQQuantizer
         del Qwen3TTSModel
@@ -170,6 +180,8 @@ def reviewer_runtime_probe() -> dict[str, object]:
         del Qwen2_5OmniProcessor
         probe = {
             "ok": True,
+            "gptq_environment_valid": True,
+            "gptq_method_api": True,
             "cuda_available": bool(torch.cuda.is_available()),
             "cuda_capability": [
                 int(value) for value in torch.cuda.get_device_capability(0)

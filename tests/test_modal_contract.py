@@ -94,8 +94,13 @@ class ModalContractTests(unittest.TestCase):
         self.assertLess(probe_index, canary_index)
         self.assertIn("modal-reviewer-probe.txt", self.workflow)
 
-    def test_gptq_build_uses_preinstalled_torch(self):
-        self.assertIn(
+    def test_gptq_build_uses_preinstalled_torch_without_cuda_compilation(self):
+        command = (
+            "BUILD_CUDA_EXT=0 python -m pip install --no-build-isolation "
+            "gptqmodel==5.7.0"
+        )
+        self.assertIn(command, self.source)
+        self.assertNotIn(
             '"python -m pip install --no-build-isolation gptqmodel==5.7.0"',
             self.source,
         )
