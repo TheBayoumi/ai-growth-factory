@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import traceback
@@ -39,6 +40,7 @@ worker_image = (
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
         "accelerate==1.12.0",
+        "optimum==1.27.0",
         "qwen-omni-utils[decord]>=0.0.8",
     )
     # gptqmodel's build metadata imports torch. Disable PEP 517 build isolation so
@@ -49,14 +51,19 @@ worker_image = (
         "python -m pip install --no-build-isolation gptqmodel==2.0.0",
         "python -m pip install --force-reinstall numpy==2.4.6 numba==0.64.0",
         (
-            "python -c \"import decord, numba, numpy, torch, torchvision; "
+            "python -c \"import decord, importlib.metadata, numba, numpy, torch, torchvision; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, "
             "Qwen2_5OmniProcessor; "
+            "from transformers.quantizers.quantizer_gptq import GptqHfQuantizer; "
+            "from transformers.utils.quantization_config import GPTQConfig; "
             "assert numpy.__version__ == '2.4.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "print('Qwen TTS and Omni runtime import preflight passed')\""
+            "assert importlib.metadata.version('optimum') == '1.27.0'; "
+            "quantizer = GptqHfQuantizer(GPTQConfig(bits=4)); "
+            "quantizer.validate_environment(); "
+            "print('Qwen TTS, Omni, and Optimum GPTQ runtime preflight passed')\""
         ),
     )
     .env(
@@ -117,7 +124,7 @@ def _prepare_runtime() -> None:
     max_containers=1,
 )
 def reviewer_runtime_probe() -> dict[str, object]:
-    """Verify the production imports and return only JSON-safe primitives."""
+    """Verify the production imports and GPTQ environment using JSON-safe primitives."""
     _prepare_runtime()
     try:
         import decord
@@ -133,18 +140,28 @@ def reviewer_runtime_probe() -> dict[str, object]:
             Qwen2_5OmniForConditionalGeneration,
             Qwen2_5OmniProcessor,
         )
+        from transformers.quantizers.quantizer_gptq import GptqHfQuantizer
+        from transformers.utils.quantization_config import GPTQConfig
 
-        if numpy.__version__ != "2.4.6":
+        if str(numpy.__version__) != "2.4.6":
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
-        if numba.__version__ != "0.64.0":
+        if str(numba.__version__) != "0.64.0":
             raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
+        optimum_version = importlib.metadata.version("optimum")
+        if optimum_version != "1.27.0":
+            raise RuntimeError(f"Unexpected Optimum version: {optimum_version}")
 
+        quantizer = GptqHfQuantizer(GPTQConfig(bits=4))
+        quantizer.validate_environment()
+
+        del quantizer
         del Qwen3TTSModel
         del process_mm_info
         del Qwen2_5OmniForConditionalGeneration
         del Qwen2_5OmniProcessor
         probe = {
             "ok": True,
+            "gptq_environment_valid": True,
             "cuda_available": bool(torch.cuda.is_available()),
             "cuda_capability": [
                 int(value) for value in torch.cuda.get_device_capability(0)
@@ -159,6 +176,8 @@ def reviewer_runtime_probe() -> dict[str, object]:
                 "torchaudio": str(torchaudio.__version__),
                 "torchvision": str(torchvision.__version__),
                 "transformers": str(transformers.__version__),
+                "optimum": optimum_version,
+                "gptqmodel": importlib.metadata.version("gptqmodel"),
                 "numpy": str(numpy.__version__),
                 "numba": str(numba.__version__),
                 "decord": str(decord.__version__),
