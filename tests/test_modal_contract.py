@@ -48,14 +48,25 @@ class ModalContractTests(unittest.TestCase):
             "numpy==2.4.6 numba==0.64.0"
         )
         self.assertIn(final_pin, self.source)
-        self.assertIn("import decord, numba, numpy, torch, torchvision", self.source)
+        self.assertIn("import decord, importlib.metadata, numba, numpy, torch, torchvision", self.source)
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
-        success_marker = "Qwen TTS and Omni runtime import preflight passed"
+        success_marker = "Qwen TTS, Omni, and Optimum GPTQ runtime preflight passed"
         self.assertIn(success_marker, self.source)
         self.assertLess(self.source.index(final_pin), self.source.index(success_marker))
         self.assertLess(self.source.index(success_marker), self.source.index(".env("))
+
+    def test_optimum_gptq_runtime_is_pinned_and_exercised(self):
+        self.assertIn('"optimum==1.27.0"', self.source)
+        self.assertIn("from transformers.quantizers.quantizer_gptq import GptqHfQuantizer", self.source)
+        self.assertIn("from transformers.utils.quantization_config import GPTQConfig", self.source)
+        self.assertIn("GptqHfQuantizer(GPTQConfig(bits=4))", self.source)
+        self.assertGreaterEqual(self.source.count("quantizer.validate_environment()"), 2)
+        self.assertIn("importlib.metadata.version('optimum') == '1.27.0'", self.source)
+        self.assertIn('"gptq_environment_valid": True', self.source)
+        self.assertIn('"optimum": optimum_version', self.source)
+        self.assertIn('"gptqmodel": importlib.metadata.version("gptqmodel")', self.source)
 
     def test_real_t4_reviewer_probe_runs_before_expensive_canary(self):
         self.assertIn("def reviewer_runtime_probe()", self.source)
