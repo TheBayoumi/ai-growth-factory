@@ -11,9 +11,9 @@ from typing import Any
 from .config import Settings
 from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
-from .local_llm import generate_package
 from .policy import reward, select_strategy
 from .render import render_video
+from .source_attributed_llm import generate_package
 from .video_qc import verify_video_output
 from .voice_pipeline import build_reviewed_narration
 from .voice_policy import contract_for_strategy
