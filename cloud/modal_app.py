@@ -34,7 +34,7 @@ worker_image = (
         "requests==2.32.5",
         "Pillow==11.3.0",
         "imageio-ffmpeg==0.6.0",
-        "numpy==2.0.0",
+        "numpy==2.4.4",
         "soundfile>=0.12,<0.14",
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
