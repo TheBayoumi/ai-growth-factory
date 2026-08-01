@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from pathlib import Path
 
 import modal
@@ -100,6 +101,57 @@ def _prepare_runtime() -> None:
 @app.function(
     image=worker_image,
     gpu="T4",
+    cpu=1.0,
+    memory=4096,
+    timeout=5 * 60,
+    max_containers=1,
+)
+def reviewer_runtime_probe() -> dict[str, object]:
+    """Verify the exact production import order inside a real T4 container."""
+    _prepare_runtime()
+    try:
+        import decord
+        import numpy
+        import torch
+        import torchaudio
+        import torchvision
+        import transformers
+        from qwen_tts import Qwen3TTSModel
+        from qwen_omni_utils import process_mm_info
+        from transformers import (
+            Qwen2_5OmniForConditionalGeneration,
+            Qwen2_5OmniProcessor,
+        )
+
+        del Qwen3TTSModel
+        del process_mm_info
+        del Qwen2_5OmniForConditionalGeneration
+        del Qwen2_5OmniProcessor
+        return {
+            "ok": True,
+            "cuda_available": bool(torch.cuda.is_available()),
+            "cuda_capability": list(torch.cuda.get_device_capability(0))
+            if torch.cuda.is_available()
+            else None,
+            "versions": {
+                "torch": torch.__version__,
+                "torchaudio": torchaudio.__version__,
+                "torchvision": torchvision.__version__,
+                "transformers": transformers.__version__,
+                "numpy": numpy.__version__,
+                "decord": decord.__version__,
+            },
+        }
+    except Exception as exc:
+        raise RuntimeError(
+            "Qwen reviewer T4 runtime probe failed: "
+            f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+        ) from exc
+
+
+@app.function(
+    image=worker_image,
+    gpu="T4",
     cpu=4.0,
     memory=16384,
     timeout=30 * 60,
@@ -170,10 +222,17 @@ def run_canary() -> dict[str, object]:
 
 
 @app.local_entrypoint()
-def main(canary: bool = False, render_canary: bool = False) -> None:
-    if canary and render_canary:
-        raise ValueError("Choose only one of --canary or --render-canary")
-    if render_canary:
+def main(
+    canary: bool = False,
+    render_canary: bool = False,
+    reviewer_probe: bool = False,
+) -> None:
+    selected = sum((canary, render_canary, reviewer_probe))
+    if selected > 1:
+        raise ValueError("Choose only one of --canary, --render-canary, or --reviewer-probe")
+    if reviewer_probe:
+        result = reviewer_runtime_probe.remote()
+    elif render_canary:
         result = render_production_canary.remote()
     elif canary:
         result = run_canary.remote()
