@@ -1,0 +1,18 @@
+{
+  "request_id": "2026-08-02-publishable-quality-batch-2-grounded",
+  "requested_at": "2026-08-02T02:33:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "quality_profile": "publishable_short_form_v2",
+  "acceptance": {
+    "single_concrete_story": true,
+    "source_grounded_copy": true,
+    "narration_words": "130-155",
+    "pace_wpm_min": 140,
+    "phrase_captions": true,
+    "varied_semantic_diagrams": true,
+    "smooth_transitions": true,
+    "human_perceptual_review_required": true
+  }
+}
