@@ -1,3 +1,4 @@
+import json
 import math
 import tempfile
 import unittest
@@ -8,8 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.config import Settings
-from factory.models import AudioReview
-from factory.voice_pipeline import build_reviewed_narration
+from factory.models import AudioMetrics, AudioReview
+from factory.voice_pipeline import _global_repair, build_reviewed_narration
 
 
 class FakeTTS:
@@ -174,6 +175,66 @@ class VoicePipelineTests(unittest.TestCase):
             result = build_reviewed_narration(settings, narration, Path(temporary), tts=tts)
             self.assertIsNone(result.review)
             self.assertEqual(result.attempts, 1)
+
+    def test_bounded_tempo_correction_accepts_the_117_wpm_canary_case(self):
+        narration = (
+            "This practical update explains the new capability and why its evidence matters for engineers. "
+            "Before deployment, compare the primary sources, test a controlled task, and measure the result."
+        )
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            "os.environ",
+            {
+                "NARRATION_SEGMENTS": "2",
+                "VOICE_REVIEW_MAX_ATTEMPTS": "3",
+                "AUDIO_MIN_RMS_DBFS": "-40",
+                "AUDIO_WPM_TOLERANCE": "32",
+                "AUDIO_SEGMENT_PAUSE_MS": "0",
+            },
+            clear=True,
+        ):
+            settings = replace(Settings.from_env(), reviewer_required=False)
+            tts = FakeTTS(117)
+            result = build_reviewed_narration(settings, narration, Path(temporary), tts=tts)
+            manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(len(tts.calls), 2)
+        self.assertTrue(result.metrics.passed, result.metrics.failures)
+        self.assertGreaterEqual(result.metrics.estimated_wpm, 123.0)
+        self.assertLessEqual(result.metrics.estimated_wpm, 187.0)
+        corrections = [
+            review for review in manifest["reviews"]
+            if review["type"] == "deterministic_tempo_correction"
+        ]
+        self.assertEqual(len(corrections), 1)
+        self.assertEqual(corrections[0]["factor"], 1.15)
+        self.assertEqual(corrections[0]["decision"], "accept")
+        self.assertAlmostEqual(
+            result.segments[-1].end_seconds,
+            result.metrics.duration_seconds,
+            delta=0.15,
+        )
+
+    def test_global_pace_repair_is_quantified(self):
+        metrics = AudioMetrics(
+            duration_seconds=60.0,
+            sample_rate=24000,
+            channels=1,
+            peak_dbfs=-3.0,
+            rms_dbfs=-20.0,
+            clipping_ratio=0.0,
+            silence_ratio=0.0,
+            max_silence_seconds=0.0,
+            estimated_wpm=117.0,
+            dc_offset=0.0,
+            passed=False,
+            failures=("estimated pace 117.0 WPM is outside target 155±32",),
+        )
+
+        repair = _global_repair(metrics, 155)
+
+        self.assertIn("about 32%", repair)
+        self.assertIn("155 words per minute", repair)
 
 
 if __name__ == "__main__":

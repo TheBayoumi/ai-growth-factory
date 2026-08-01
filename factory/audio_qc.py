@@ -20,6 +20,10 @@ class AudioQCError(RuntimeError):
     pass
 
 
+MIN_TEMPO_FACTOR = 0.85
+MAX_TEMPO_FACTOR = 1.15
+
+
 def split_narration(text: str, target_segments: int) -> list[str]:
     clean = re.sub(r"\s+", " ", text).strip()
     if not clean:
@@ -83,6 +87,67 @@ def _read_pcm16(path: Path) -> tuple[array, int, int]:
 def wav_duration(path: Path) -> float:
     with wave.open(str(path), "rb") as wav:
         return wav.getnframes() / float(wav.getframerate())
+
+
+def tempo_correction_factor(
+    *,
+    estimated_wpm: float,
+    target_wpm: int,
+    tolerance: int,
+    minimum_factor: float = MIN_TEMPO_FACTOR,
+    maximum_factor: float = MAX_TEMPO_FACTOR,
+) -> float | None:
+    """Return a bounded tempo factor only when it can bring pace inside the gate."""
+    if estimated_wpm <= 0:
+        raise AudioQCError("estimated_wpm must be positive")
+    if target_wpm <= 0 or tolerance < 0:
+        raise AudioQCError("target_wpm must be positive and tolerance must be non-negative")
+    if not 0.5 <= minimum_factor <= 1.0 <= maximum_factor <= 2.0:
+        raise AudioQCError("tempo correction bounds must straddle 1.0")
+
+    lower_wpm = target_wpm - tolerance
+    upper_wpm = target_wpm + tolerance
+    if lower_wpm <= estimated_wpm <= upper_wpm:
+        return None
+
+    requested = target_wpm / estimated_wpm
+    factor = min(max(requested, minimum_factor), maximum_factor)
+    projected_wpm = estimated_wpm * factor
+    if lower_wpm <= projected_wpm <= upper_wpm:
+        return factor
+    return None
+
+
+def correct_audio_tempo(input_path: Path, output_path: Path, *, factor: float) -> Path:
+    """Apply a conservative, pitch-preserving tempo correction with FFmpeg atempo."""
+    if not MIN_TEMPO_FACTOR <= factor <= MAX_TEMPO_FACTOR:
+        raise AudioQCError(
+            f"Tempo factor must be between {MIN_TEMPO_FACTOR:.2f} and {MAX_TEMPO_FACTOR:.2f}"
+        )
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(input_path),
+        "-af",
+        f"atempo={factor:.6f}",
+        "-ar",
+        "24000",
+        "-ac",
+        "1",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+    if completed.returncode != 0 or not output_path.exists() or output_path.stat().st_size <= 44:
+        raise AudioQCError(f"Audio tempo correction failed: {completed.stderr[-2000:]}")
+    return output_path
 
 
 def analyze_audio(
