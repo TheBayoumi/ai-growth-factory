@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+.venv/
+venv/
+
+# Runtime state and model caches
+.cache/
+models/
+state/
+work/
+outputs/
+artifacts/
+*.wav
+*.mp3
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.srt
+*.vtt
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.token
+*.pem
+*.key
+secrets.json
+youtube_oauth.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -78,70 +78,133 @@ It processes each narration segment separately and returns text-only JSON. Segme
 
 ```env
 REVIEWER_BACKEND=openai
+OPENAI_API_KEY=...
 ```
 
-It is not part of the zero-API-cost proof stage.
+No OpenAI key is required for the proof-stage deployment.
 
-## Repository workflows
+## Modal activation
 
-- `.github/workflows/ci.yml` runs verification only after changes land on `main`.
-- `.github/workflows/modal-deploy.yml` deploys the GPU worker manually from a protected environment.
-- `.github/workflows/modal-canary.yml` runs a private GPU canary manually.
+### 1. Install and authenticate
 
-## Safety contract
-
-A video cannot reach the publisher unless all of the following pass:
-
-1. Primary-source freshness and evidence checks.
-2. Qwen3-TTS provenance in the narration manifest.
-3. Deterministic audio checks.
-4. Approved perceptual review.
-5. Stable video motion and codec checks.
-6. Correct source mapping.
-7. Private-first publishing policy during validation.
-
-Placeholder narration, eSpeak output, missing review evidence, hold-jump motion and stale sources all fail closed.
-
-## Local verification
+Linux/macOS:
 
 ```bash
-python -m pip install -e . coverage
-python -m compileall -q factory api tests cloud
-coverage run --branch -m unittest discover -s tests -v
-coverage report --fail-under=65
-python scripts/repository_preflight.py
+bash cloud/deploy_modal.sh
 ```
 
-## Modal deployment
+Windows PowerShell:
 
-Required GitHub environment: `modal-production`
-
-Required repository or environment secrets:
-
-```text
-MODAL_TOKEN_ID
-MODAL_TOKEN_SECRET
+```powershell
+.\cloud\deploy_modal.ps1
 ```
 
-The Modal worker also expects a Modal secret named `ai-growth-factory-secrets` containing the YouTube OAuth JSON and private-first publishing controls.
+The script installs the Modal CLI and opens Modal's account authorization flow.
 
-Deploy through GitHub Actions using **Deploy Modal GPU Worker**, or locally:
+### 2. Create the owner secret
 
 ```bash
-pip install "modal==1.5.3"
+modal secret create ai-growth-factory-secrets \
+  YOUTUBE_OAUTH_JSON='{"client_id":"...","client_secret":"...","refresh_token":"..."}' \
+  PUBLISH_ENABLED=true \
+  YOUTUBE_PRIVACY_STATUS=private
+```
+
+Do not put OAuth credentials in the repository or image.
+
+### 3. Set the hard workspace budget
+
+In Modal workspace settings, set the monthly budget to **$30** before deploying. This prevents proof-stage experimentation from becoming an unplanned bill.
+
+### 4. Deploy the schedule
+
+```bash
 modal deploy cloud/modal_app.py
 ```
 
-Run a private canary:
+The deployed function runs daily at 10:00 in `Africa/Cairo`.
+
+### 5. Run a private canary
 
 ```bash
 modal run cloud/modal_app.py --canary
 ```
 
-## Current status
+Keep the first three uploads private. Review the generated video, voice-review manifest, sources and YouTube metadata before moving to unlisted or public publication.
 
-- Source and tests: ready.
-- Vercel control plane: deployed separately.
-- GitHub repository: initialized.
-- Modal GPU worker: requires authorized Modal tokens and YouTube OAuth credentials.
-- Public publishing: intentionally disabled until private canaries pass perceptual review.
+## Lightning AI fallback
+
+Upload the repository to a free Lightning Studio, then run:
+
+```bash
+bash cloud/lightning_bootstrap.sh
+```
+
+Lightning is used for:
+
+- Model compatibility tests.
+- Prompt and voice-contract experiments.
+- Diagnosing failed Modal runs.
+- Manual private canaries.
+
+It is not the daily production scheduler because free Studio sessions restart and available GPU credits can vary.
+
+## Promotion gates
+
+The pipeline may move from private to unlisted only after three consecutive canaries satisfy all of these:
+
+- Primary-source validation passes.
+- Narration passes objective DSP checks.
+- Open-weight reviewer passes local thresholds.
+- No unexplained visual, audio or metadata defect.
+- No copyright or policy warning.
+
+Public publication remains a separate owner decision. Paid infrastructure becomes justified only when measured channel or conversion revenue covers the projected monthly compute cost with a safety margin.
+
+## Local validation
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q factory api tests cloud
+python -m factory doctor
+```
+
+## Important files
+
+- `cloud/modal_app.py` — scheduled T4 production worker.
+- `cloud/deploy_modal.sh` / `.ps1` — Modal bootstrap.
+- `cloud/lightning_bootstrap.sh` — Lightning development setup.
+- `factory/qwen_omni_reviewer.py` — open-weight segment reviewer.
+- `factory/voice_pipeline.py` — bounded review and selective repair loop.
+- `.env.example` — provider-independent configuration.
+- `DEPLOYMENT_STATUS.md` — exact deployed and undeployed boundaries.
+- `QUALITY_REPORT.md` — test evidence and limitations.
+
+## Version 1.3.1 corrective media gate
+
+The 1.3.0 media files are invalidated. They used eSpeak timing audio and a quantized FFmpeg `zoompan` effect that produced hold-jump stutter. They must not be used for publication or quality approval.
+
+Version 1.3.1 adds:
+
+- pixel-stable editorial scenes with semantic cuts;
+- consecutive-frame temporal analysis;
+- explicit rejection of hold-jump motion;
+- Qwen3-TTS generator provenance in the voice manifest;
+- mandatory perceptual-review approval and threshold checks;
+- fail-closed rejection of eSpeak, missing provenance, or missing reviews;
+- scene-specific source indices so publisher labels match the supporting source;
+- a renamed mechanical `generate_visual_fixture.py` script that requires explicit opt-in and writes `NOT_A_PRODUCTION_CANARY.txt`.
+
+No replacement production canary is included. A production canary is valid only after the real Modal T4 worker generates Qwen3-TTS audio, Qwen2.5-Omni approves it, temporal QC passes, and the resulting upload remains private for owner review.
+
+See `EXPERT_AUDIT_1.3.0.md` for the full root-cause analysis.
+
+## Repository automation
+
+This repository includes three GitHub Actions workflows:
+
+- `CI` — Python 3.12/3.13 tests, branch coverage, compilation and credential/media preflight.
+- `Deploy Modal GPU Worker` — manual, protected deployment of the scheduled T4 application.
+- `Run Private GPU Canary` — manual invocation of the real-model private canary.
+
+See [`docs/GPU_DEPLOYMENT.md`](docs/GPU_DEPLOYMENT.md) for the exact secret and promotion contract.

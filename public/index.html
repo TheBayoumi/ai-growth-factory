@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Growth Factory</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,ui-sans-serif,system-ui;background:#06101d;color:#edf7ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0,#103754 0,#06101d 42%);min-height:100vh}.wrap{max-width:980px;margin:auto;padding:48px 22px}h1{font-size:clamp(2.2rem,7vw,5rem);line-height:.95;margin:.2em 0}.sub{color:#a8c5d9;font-size:1.15rem;max-width:800px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin-top:30px}.card{background:#0b1c2dcf;border:1px solid #24516b;border-radius:18px;padding:22px;box-shadow:0 20px 60px #0006}.pill{display:inline-block;padding:7px 11px;border-radius:999px;background:#12364d;color:#72ddff;font-weight:700}input{width:100%;padding:12px;margin:7px 0;border:1px solid #315f78;border-radius:10px;background:#071522;color:white}button{border:0;border-radius:10px;padding:12px 16px;background:#55d7ff;color:#04111d;font-weight:800;cursor:pointer}code,pre{background:#06121f;border-radius:9px;padding:4px 7px;overflow:auto}.steps li{margin:.7em 0}.muted{color:#88a9bd;font-size:.92rem}</style>
+</head>
+<body><main class="wrap">
+<span class="pill">MODAL T4 · OPEN-WEIGHT PIPELINE</span>
+<h1>AI Growth Factory</h1>
+<p class="sub">Primary-source AI research → Qwen script → Qwen3‑TTS narration → Qwen2.5‑Omni segment review and repair → procedural video → YouTube → growth learning.</p>
+<div class="grid">
+<section class="card"><h2>Control-plane status</h2><pre id="status">Loading…</pre><p class="muted">Vercel stores no model weights or channel tokens. The bounded GPU job runs on Modal.</p></section>
+<section class="card"><h2>Voice quality loop</h2><p>Objective DSP checks run first. Qwen2.5‑Omni reviews short audio segments, and Qwen3‑TTS regenerates only the failed segments.</p></section>
+<section class="card"><h2>Cost guard</h2><p>One T4, one daily Cairo-time cron, one container, a thirty-minute ceiling and private-first uploads.</p></section>
+</div>
+<section class="card" style="margin-top:16px"><h2>One-time YouTube authorization</h2><p>Create a Google Web OAuth client and add this exact redirect URI:</p><pre id="redirect"></pre>
+<input id="cid" autocomplete="off" placeholder="OAuth client ID">
+<input id="secret" type="password" autocomplete="off" placeholder="OAuth client secret">
+<button id="authorize">Authorize YouTube</button>
+<p class="muted">The secret stays in this browser session until the callback returns the compact <code>YOUTUBE_OAUTH_JSON</code> value.</p>
+</section>
+<section class="card" style="margin-top:16px"><h2>Free-stage activation</h2><ol class="steps"><li>Authenticate the Modal CLI.</li><li>Set a $30 workspace budget.</li><li>Create the Modal secret containing <code>YOUTUBE_OAUTH_JSON</code>.</li><li>Deploy <code>cloud/modal_app.py</code>.</li><li>Run three private canaries before changing visibility.</li></ol><p class="muted">No OpenAI API key is required by the default proof-stage pipeline.</p></section>
+</main>
+<script>
+const redirect=location.origin+'/api/oauth';document.getElementById('redirect').textContent=redirect;
+fetch('/api/health').then(r=>r.json()).then(x=>{document.getElementById('status').textContent=JSON.stringify(x,null,2)}).catch(e=>document.getElementById('status').textContent=e.message);
+document.getElementById('authorize').onclick=()=>{const client_id=document.getElementById('cid').value.trim();const client_secret=document.getElementById('secret').value;if(!client_id||!client_secret){alert('Enter the OAuth client ID and secret.');return;}sessionStorage.setItem('yt_client_id',client_id);sessionStorage.setItem('yt_client_secret',client_secret);const scopes=['https://www.googleapis.com/auth/youtube.upload','https://www.googleapis.com/auth/youtube.force-ssl','https://www.googleapis.com/auth/youtube.readonly','https://www.googleapis.com/auth/yt-analytics.readonly'];const q=new URLSearchParams({client_id,redirect_uri:redirect,response_type:'code',access_type:'offline',prompt:'consent',include_granted_scopes:'true',scope:scopes.join(' ')});location.href='https://accounts.google.com/o/oauth2/v2/auth?'+q.toString();};
+</script></body></html>

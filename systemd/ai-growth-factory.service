@@ -1,0 +1,9 @@
+[Unit]
+Description=AI Growth Factory autonomous run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ai-growth-factory-autonomous-voice
+ExecStart=%h/ai-growth-factory-autonomous-voice/scripts/run_once.sh
