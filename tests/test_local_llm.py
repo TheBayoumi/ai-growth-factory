@@ -79,7 +79,22 @@ class LocalLLMTests(unittest.TestCase):
         self.assertEqual(chat.call_count, 2)
         repair_prompt = chat.call_args_list[1].args[1]
         self.assertIn("Narration word count outside quality gate: 96", repair_prompt)
-        self.assertIn("135-175 whitespace-separated words", repair_prompt)
+        self.assertIn("145-165", repair_prompt)
+        self.assertIn("contains 96", repair_prompt)
+
+    def test_final_near_threshold_script_gets_claim_neutral_close(self):
+        near_threshold = self.package()
+        near_threshold["narration"] = " ".join(f"word{index}" for index in range(117))
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat",
+            side_effect=[near_threshold, near_threshold, near_threshold],
+        ) as chat:
+            package = generate_package(Settings.from_env(), self.sources, self.strategy)
+        self.assertEqual(chat.call_count, 3)
+        self.assertGreaterEqual(len(package.narration.split()), 135)
+        self.assertLessEqual(len(package.narration.split()), 190)
+        self.assertIn("linked primary sources", package.narration)
+        self.assertIn("controlled task", package.narration)
 
     def test_package_stops_after_three_invalid_content_attempts(self):
         undersized = self.package()

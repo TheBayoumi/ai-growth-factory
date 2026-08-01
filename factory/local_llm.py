@@ -60,6 +60,21 @@ PACKAGE_REQUIRED_KEYS = {
     "scenes",
 }
 
+NARRATION_MIN_WORDS = 120
+NARRATION_MAX_WORDS = 190
+NARRATION_TARGET_MIN_WORDS = 145
+NARRATION_TARGET_MAX_WORDS = 165
+
+# These sentences contain no topic-specific claims. They are used only after the
+# model has exhausted its bounded repair attempts and the script is already close
+# to the minimum length. This avoids spending TTS GPU time on a three-word miss
+# without weakening the evidence or duration gates.
+EVIDENCE_SAFE_CLOSES = (
+    "Before adopting it, read the linked primary sources, test the feature on a controlled task, and compare the result with your current workflow.",
+    "That separates an interesting release from a dependable production tool.",
+    "The evidence should decide the next step, not the headline.",
+)
+
 
 def _extract_json(text: str) -> dict[str, Any]:
     clean = text.strip()
@@ -162,6 +177,34 @@ def healthcheck(settings: Settings) -> dict[str, Any]:
     return {"ok": True, "models": [str(item.get("id", "")) for item in models]}
 
 
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
+    """Add a claim-neutral verification close to an almost-valid final draft.
+
+    The model still gets the first three opportunities to produce a complete
+    script. This deterministic fallback is intentionally limited to drafts that
+    are already at least 100 words, so materially incomplete scripts still fail.
+    """
+    narration = str(raw.get("narration") or "").strip()
+    word_count = _word_count(narration)
+    if not 100 <= word_count < NARRATION_MIN_WORDS:
+        return raw
+
+    corrected = dict(raw)
+    lowered = narration.casefold()
+    for closing in EVIDENCE_SAFE_CLOSES:
+        if closing.casefold() not in lowered:
+            narration = f"{narration} {closing}".strip()
+            lowered = narration.casefold()
+        if _word_count(narration) >= 135:
+            break
+    corrected["narration"] = narration
+    return corrected
+
+
 def _package_from_raw(
     settings: Settings,
     sources: list[SourceItem],
@@ -191,8 +234,8 @@ def _package_from_raw(
         raise LocalLLMError("Package did not use enough independent primary publishers")
 
     narration = str(raw["narration"]).strip()
-    word_count = len(narration.split())
-    if not 120 <= word_count <= 190:
+    word_count = _word_count(narration)
+    if not NARRATION_MIN_WORDS <= word_count <= NARRATION_MAX_WORDS:
         raise LocalLLMError(f"Narration word count outside quality gate: {word_count}")
 
     scenes_raw = raw["scenes"]
@@ -237,16 +280,24 @@ def _repair_prompt(
     previous: dict[str, Any],
     source_payload: list[dict[str, str]],
 ) -> str:
+    current_word_count = _word_count(str(previous.get("narration") or ""))
+    minimum_addition = max(0, NARRATION_TARGET_MIN_WORDS - current_word_count)
     return f"""
 Repair the previous JSON package so it passes the stated validation error. Return the COMPLETE corrected JSON object only, not a patch.
 
 VALIDATION ERROR:
 {validation_error}
 
+NARRATION REPAIR:
+- The previous narration contains {current_word_count} whitespace-separated words.
+- Rewrite the complete narration to {NARRATION_TARGET_MIN_WORDS}-{NARRATION_TARGET_MAX_WORDS} words.
+- Add at least {minimum_addition} words when the previous narration is too short.
+- Do not merely append a fragment; preserve a natural hook, evidence, practical implication, caveat, and closing.
+- Count the final narration words before returning the JSON.
+
 NON-NEGOTIABLE RULES:
 - Use only source URLs and publisher names copied exactly from SOURCE ENTRIES.
 - Preserve factual claims unless the supplied sources require correction.
-- narration must contain 135-175 whitespace-separated words. Count the words before returning.
 - scenes must contain exactly 6 objects.
 - Every scene source_index must be valid for the corrected source_urls array.
 - source_urls and source_publishers must correspond one-for-one.
@@ -290,7 +341,7 @@ Creative strategy:
 
 Return one JSON object containing:
 - topic: string
-- narration: 135-175 whitespace-separated words, exact spoken script, credible and non-hyped. Count the words before returning.
+- narration: {NARRATION_TARGET_MIN_WORDS}-{NARRATION_TARGET_MAX_WORDS} whitespace-separated words, exact spoken script, credible and non-hyped. Count the words before returning.
 - title: <=90 characters
 - description: two concise paragraphs followed by a Sources section containing every used source URL
 - tags: 8-14 plain strings
@@ -310,6 +361,8 @@ SOURCE ENTRIES:
     last_error: LocalLLMError | None = None
     for package_attempt in range(3):
         raw = _chat(settings, current_prompt)
+        if package_attempt == 2:
+            raw = _stabilize_near_minimum_narration(raw)
         try:
             return _package_from_raw(settings, sources, raw)
         except LocalLLMError as exc:

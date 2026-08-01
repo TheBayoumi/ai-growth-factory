@@ -14,12 +14,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  authorize-deploy-canary:
+  deploy-canary:
     if: >-
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
       - name: Check out merged main
         uses: actions/checkout@v4
@@ -43,34 +47,34 @@ jobs:
           python -m unittest discover -s tests -v
           python scripts/repository_preflight.py
 
-      - name: Authorize Modal in browser
+      - name: Validate persistent Modal credentials
         shell: bash
         run: |
           set -euo pipefail
-          echo "Open the Modal URL printed below and complete the account authorization."
-          stdbuf -oL -eL python -m modal token new \
-            --profile github-production-verification \
-            --source github-actions \
-            --no-verify
+          test -n "${MODAL_TOKEN_ID:-}" || {
+            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+          test -n "${MODAL_TOKEN_SECRET:-}" || {
+            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
 
       - name: Deploy T4 production worker
         env:
           MODAL_USE_FACTORY_SECRET: "false"
         run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
 
-      - name: Run real render-only production canary
+      - name: Run real render-only production canary and capture result
         id: canary
         continue-on-error: true
         shell: bash
         run: |
-          set +e
           set -o pipefail
           modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-canary-result.txt
-          code=${PIPESTATUS[0]}
-          echo "$code" > modal-canary-exit-code.txt
-          exit 0
 
       - name: Resolve canary artifact identifier
+        if: always()
         shell: bash
         run: |
           python - <<'PY'
@@ -78,7 +82,10 @@ jobs:
           import re
           from pathlib import Path
 
-          text = Path("modal-canary-result.txt").read_text(encoding="utf-8", errors="replace")
+          result_path = Path("modal-canary-result.txt")
+          if not result_path.exists():
+              raise SystemExit("Modal canary output was not created")
+          text = result_path.read_text(encoding="utf-8", errors="replace")
           candidates = []
           for line in text.splitlines():
               stripped = line.strip()
@@ -100,6 +107,7 @@ jobs:
           PY
 
       - name: Download exact GPU output bundle
+        if: always() && hashFiles('canary-id.txt') != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -110,31 +118,46 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: modal-production-canary
+          name: modal-production-canary-${{ github.run_attempt }}
           path: |
             production-canary/
             modal-canary-result.txt
-            modal-canary-exit-code.txt
             canary-id.txt
           if-no-files-found: warn
           retention-days: 30
 
       - name: Enforce canary success
+        if: always()
         shell: bash
+        env:
+          CANARY_STEP_OUTCOME: ${{ steps.canary.outcome }}
         run: |
           set -euo pipefail
-          test "$(cat modal-canary-exit-code.txt)" = "0"
+          if [ "${CANARY_STEP_OUTCOME}" != "success" ]; then
+            if [ -f production-canary/canary-failure.json ]; then
+              cat production-canary/canary-failure.json
+            fi
+            echo "The real Modal canary process failed." >&2
+            exit 1
+          fi
           test -f production-canary/canary-result.json
           python - <<'PY'
           import json
           from pathlib import Path
 
-          result = json.loads(Path("production-canary/canary-result.json").read_text(encoding="utf-8"))
+          root = Path("production-canary")
+          result = json.loads((root / "canary-result.json").read_text(encoding="utf-8"))
           if result.get("status") != "verified_render_canary":
               raise SystemExit(f"Canary was not verified: {result}")
-          if not (Path("production-canary") / "video.mp4").exists():
-              raise SystemExit("Canary video is missing")
-          if not (Path("production-canary") / "narration.wav").exists():
-              raise SystemExit("Canary narration is missing")
+          required = (
+              "video.mp4",
+              "narration.wav",
+              "voice-review-manifest.json",
+              "video-qc-report.json",
+              "package.json",
+          )
+          missing = [name for name in required if not (root / name).exists()]
+          if missing:
+              raise SystemExit("Canary artifact is incomplete: " + ", ".join(missing))
           print(json.dumps(result, indent=2, ensure_ascii=False))
           PY
