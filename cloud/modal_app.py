@@ -100,6 +100,9 @@ def _prepare_runtime() -> None:
     Path(WORK_DIR).mkdir(parents=True, exist_ok=True)
     Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
     Path(MODEL_CACHE).mkdir(parents=True, exist_ok=True)
+    from factory.source_index_repair import install_source_index_repair
+
+    install_source_index_repair()
 
 
 @app.function(
