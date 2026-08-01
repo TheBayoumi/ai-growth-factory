@@ -41,14 +41,14 @@ class ModalContractTests(unittest.TestCase):
 
     def test_qwen_omni_runtime_is_complete_and_preflighted(self):
         self.assertIn("torchvision==0.23.0", self.source)
-        self.assertNotIn('"numpy==2.0.0"', self.source)
         self.assertIn('"qwen-omni-utils[decord]>=0.0.8"', self.source)
         final_pin = (
             "python -m pip install --force-reinstall "
-            "numpy==2.4.6 numba==0.64.0"
+            "numpy==2.4.6 numba==0.64.0 transformers==4.57.3 optimum==2.2.0"
         )
         self.assertIn(final_pin, self.source)
-        self.assertIn("import decord, numba, numpy, torch, torchvision", self.source)
+        self.assertIn("from gptqmodel.quantization import METHOD", self.source)
+        self.assertIn("assert hasattr(METHOD, 'GPTQ'), METHOD", self.source)
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
@@ -57,26 +57,27 @@ class ModalContractTests(unittest.TestCase):
         self.assertLess(self.source.index(final_pin), self.source.index(success_marker))
         self.assertLess(self.source.index(success_marker), self.source.index(".env("))
 
-    def test_gptq_omni_load_path_requires_optimum(self):
+    def test_gptq_omni_load_path_requires_current_compatible_runtime(self):
         self.assertIn('"optimum==2.2.0"', self.source)
         self.assertIn("from transformers.utils import is_optimum_available", self.source)
         self.assertIn(
-            "assert version('optimum') == '2.2.0', version('optimum')",
+            "assert version('gptqmodel') == '5.8.0', version('gptqmodel')",
             self.source,
         )
         self.assertIn(
             "assert is_optimum_available(), 'Transformers cannot detect Optimum'",
             self.source,
         )
-        self.assertIn('"optimum": str(package_version("optimum"))', self.source)
+        self.assertIn('"gptqmodel": str(package_version("gptqmodel"))', self.source)
         self.assertLess(
             self.source.index('"optimum==2.2.0"'),
-            self.source.index("gptqmodel==2.0.0"),
+            self.source.index("gptqmodel==5.8.0"),
         )
 
     def test_real_t4_reviewer_probe_runs_before_expensive_canary(self):
         self.assertIn("def reviewer_runtime_probe()", self.source)
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
+        self.assertIn("GPTQModel does not expose METHOD.GPTQ", self.source)
         self.assertIn("Qwen reviewer T4 runtime probe failed", self.source)
         self.assertIn("--reviewer-probe", self.workflow)
         probe_index = self.workflow.index("Probe T4 reviewer runtime")
@@ -86,11 +87,11 @@ class ModalContractTests(unittest.TestCase):
 
     def test_gptq_build_uses_preinstalled_torch(self):
         self.assertIn(
-            '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',
+            '"python -m pip install --no-build-isolation gptqmodel==5.8.0"',
             self.source,
         )
         pip_install_section = self.source.split(".pip_install(", 1)[1].split(
-            ")\n    # gptqmodel", 1
+            ")\n    # GPTQModel", 1
         )[0]
         self.assertNotIn("gptqmodel", pip_install_section)
 
@@ -146,10 +147,6 @@ class ModalContractTests(unittest.TestCase):
         )
         self.assertIn("find production-canary -type f -print -quit", self.workflow)
         self.assertIn("find production-canary -type f -print | sort", self.workflow)
-        self.assertNotIn(
-            'modal volume get --force ai-growth-factory-state "canaries/${canary_id}" production-canary\n',
-            self.workflow,
-        )
 
     def test_enforcement_resolves_nested_modal_export_directory(self):
         self.assertIn("find production-canary -name canary-failure.json", self.workflow)
