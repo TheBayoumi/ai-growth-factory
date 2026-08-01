@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'merge-ci-a10-production-verification' || format('merge-ci-{0}', github.run_id) }}
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -37,3 +42,167 @@ jobs:
         run: coverage report --fail-under=65
       - name: Secret-pattern check
         run: python scripts/repository_preflight.py
+
+  production-verification:
+    needs: test
+    if: >-
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Check out CI-verified main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Validate persistent Modal credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${MODAL_TOKEN_ID:-}" || {
+            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+          test -n "${MODAL_TOKEN_SECRET:-}" || {
+            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+
+      - name: Set up production client
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install production client and preflight source
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "modal==1.5.3"
+          python -m compileall -q factory api cloud
+          python scripts/repository_preflight.py
+
+      - name: Verify Modal credential pair
+        run: modal token info
+
+      - name: Deploy A10 production worker
+        env:
+          MODAL_USE_FACTORY_SECRET: "false"
+        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
+
+      - name: Generate real platform-ready video and capture result
+        id: production
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-production-result.txt
+
+      - name: Resolve generated artifact identifier
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          result_path = Path("modal-production-result.txt")
+          if not result_path.exists():
+              raise SystemExit("Modal production output was not created")
+          text = result_path.read_text(encoding="utf-8", errors="replace")
+          candidates = []
+          for line in text.splitlines():
+              stripped = line.strip()
+              if stripped.startswith("{") and stripped.endswith("}"):
+                  try:
+                      candidates.append(json.loads(stripped))
+                  except json.JSONDecodeError:
+                      pass
+          if candidates:
+              canary_id = str(candidates[-1].get("canary_id") or "")
+          else:
+              matches = re.findall(r'"canary_id"\s*:\s*"([^"]+)"', text)
+              canary_id = matches[-1] if matches else ""
+          if not canary_id:
+              raise SystemExit("Could not resolve canary_id from Modal output")
+          Path("canary-id.txt").write_text(canary_id, encoding="utf-8")
+          print(canary_id)
+          PY
+
+      - name: Download exact generated video bundle
+        if: always() && hashFiles('canary-id.txt') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          canary_id=$(cat canary-id.txt)
+          rm -rf production-video
+          mkdir -p production-video
+          modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-video/
+          test -n "$(find production-video -type f -print -quit)" || {
+            echo "Modal volume download produced no production files." >&2
+            exit 1
+          }
+          find production-video -type f -print | sort
+
+      - name: Upload exact production artifact
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-ready-production-video-${{ github.run_attempt }}
+          path: |
+            production-video/
+            modal-production-result.txt
+            canary-id.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Enforce complete platform-ready output
+        if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
+        shell: bash
+        env:
+          PRODUCTION_STEP_OUTCOME: ${{ steps.production.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
+            failure=$(find production-video -name canary-failure.json -type f -print -quit)
+            if [ -n "${failure}" ]; then
+              cat "${failure}"
+            fi
+            echo "The real Modal production generation failed." >&2
+            exit 1
+          fi
+          result_file=$(find production-video -name canary-result.json -type f -print -quit)
+          test -n "${result_file}"
+          python - "${result_file}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          result_path = Path(sys.argv[1])
+          root = result_path.parent
+          result = json.loads(result_path.read_text(encoding="utf-8"))
+          if result.get("status") != "verified_render_canary":
+              raise SystemExit(f"Production output was not verified: {result}")
+          required = (
+              "video.mp4",
+              "narration.wav",
+              "thumbnail.png",
+              "voice-review-manifest.json",
+              "video-qc-report.json",
+              "package.json",
+          )
+          missing = [name for name in required if not (root / name).exists()]
+          if missing:
+              raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
+          video_qc = result.get("video_qc") or {}
+          if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
+              raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
+          if float(video_qc.get("fps", 0.0)) < 29.0:
+              raise SystemExit(f"Production video frame rate is below 30 fps target: {video_qc}")
+          print(json.dumps(result, indent=2, ensure_ascii=False))
+          PY
