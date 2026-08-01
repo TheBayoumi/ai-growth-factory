@@ -1,0 +1,20 @@
+{
+  "request": "render-only-production-canary",
+  "requested_at": "2026-08-01T15:33:00+03:00",
+  "gpu": "T4",
+  "publishing_enabled": false,
+  "required_outputs": [
+    "video.mp4",
+    "narration.wav",
+    "thumbnail.png",
+    "voice-review-manifest.json",
+    "video-qc-report.json",
+    "canary-result.json"
+  ],
+  "acceptance": {
+    "status": "verified_render_canary",
+    "production_voice_provenance": true,
+    "perceptual_reviewer_required": true,
+    "temporal_stability_required": true
+  }
+}
