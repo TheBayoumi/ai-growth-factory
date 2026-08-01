@@ -25,7 +25,8 @@ class ModalNumPyCompatibilityTests(unittest.TestCase):
         compatibility = 'numpy==2.4.6 numba==0.64.0'
         preflight = 'from qwen_tts import Qwen3TTSModel'
         self.assertLess(self.source.index(compatibility), self.source.index(preflight))
-        self.assertIn('"numba": numba.__version__', self.source)
+        self.assertIn('"numba": str(numba.__version__)', self.source)
+        self.assertNotIn('"numba": numba.__version__', self.source)
 
     def test_production_vertical_output_is_full_hd(self):
         self.assertIn('"VIDEO_WIDTH": "1080"', self.source)
