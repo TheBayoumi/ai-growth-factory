@@ -134,31 +134,38 @@ def reviewer_runtime_probe() -> dict[str, object]:
             Qwen2_5OmniProcessor,
         )
 
-        if numpy.__version__ != "2.4.6":
+        if str(numpy.__version__) != "2.4.6":
             raise RuntimeError(f"Unexpected NumPy version: {numpy.__version__}")
-        if numba.__version__ != "0.64.0":
+        if str(numba.__version__) != "0.64.0":
             raise RuntimeError(f"Unexpected Numba version: {numba.__version__}")
 
         del Qwen3TTSModel
         del process_mm_info
         del Qwen2_5OmniForConditionalGeneration
         del Qwen2_5OmniProcessor
-        return {
+        cuda_available = bool(torch.cuda.is_available())
+        capability = (
+            [int(value) for value in torch.cuda.get_device_capability(0)]
+            if cuda_available
+            else None
+        )
+        result: dict[str, object] = {
             "ok": True,
-            "cuda_available": bool(torch.cuda.is_available()),
-            "cuda_capability": list(torch.cuda.get_device_capability(0))
-            if torch.cuda.is_available()
-            else None,
+            "cuda_available": cuda_available,
+            "cuda_capability": capability,
             "versions": {
-                "torch": torch.__version__,
-                "torchaudio": torchaudio.__version__,
-                "torchvision": torchvision.__version__,
-                "transformers": transformers.__version__,
-                "numpy": numpy.__version__,
-                "numba": numba.__version__,
-                "decord": decord.__version__,
+                "torch": str(torch.__version__),
+                "torchaudio": str(torchaudio.__version__),
+                "torchvision": str(torchvision.__version__),
+                "transformers": str(transformers.__version__),
+                "numpy": str(numpy.__version__),
+                "numba": str(numba.__version__),
+                "decord": str(decord.__version__),
             },
         }
+        # Modal serializes the remote return value on the client. Force a JSON
+        # round-trip so framework-specific version objects cannot leak into pickle.
+        return json.loads(json.dumps(result, ensure_ascii=False))
     except Exception as exc:
         raise RuntimeError(
             "Qwen reviewer T4 runtime probe failed: "
