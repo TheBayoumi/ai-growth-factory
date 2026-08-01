@@ -1,0 +1,15 @@
+{
+  "baseline_style": "authoritative, modern, natural technology analyst",
+  "target_wpm": 155,
+  "energy": 0.68,
+  "warmth": 0.56,
+  "pitch_variation": 0.42,
+  "hook_intensity": 0.82,
+  "articulation": 0.86,
+  "pause_style": "short rhetorical pauses; no dramatic dead air",
+  "pronunciation_lexicon": {
+    "Qwen": "kwen",
+    "NVIDIA": "en-vid-ee-uh",
+    "API": "A P I"
+  }
+}
