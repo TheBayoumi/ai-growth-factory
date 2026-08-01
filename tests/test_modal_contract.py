@@ -32,6 +32,13 @@ class ModalContractTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.source)
 
+    def test_t4_voice_runtime_uses_stable_precision_and_complete_audio_tools(self):
+        self.assertIn('"QWEN_TTS_DEVICE": "cuda:0"', self.source)
+        self.assertIn('"QWEN_TTS_DTYPE": "float32"', self.source)
+        self.assertIn('"QWEN_TTS_ATTENTION": "sdpa"', self.source)
+        self.assertIn('"sox"', self.source)
+        self.assertIn('"libsox-fmt-all"', self.source)
+
     def test_gptq_build_uses_preinstalled_torch(self):
         self.assertIn(
             '"python -m pip install --no-build-isolation gptqmodel==2.0.0"',
