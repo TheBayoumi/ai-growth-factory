@@ -1,0 +1,45 @@
+name: Bootstrap production source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - source.zip.b64
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootstrap-production-source
+  cancel-in-progress: false
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decode verified source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode source.zip.b64 > source.zip
+          echo "7fe85e12b57d1ab6dbf2c7dcffd079e57185001918a0a4bfbd0a82e0c0b0e4e6  source.zip" | sha256sum --check --strict
+      - name: Replace repository tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf extracted
+          mkdir extracted
+          unzip -q source.zip -d extracted
+          rsync -a --delete --exclude='.git/' extracted/ ./
+          rm -rf extracted source.zip
+      - name: Commit production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: import production GPU pipeline v1.3.1"
+          git push origin HEAD:main
