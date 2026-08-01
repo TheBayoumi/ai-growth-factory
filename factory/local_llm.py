@@ -205,6 +205,83 @@ def _stabilize_near_minimum_narration(raw: dict[str, Any]) -> dict[str, Any]:
     return corrected
 
 
+def _normalize_scene_source_indices(
+    scenes_raw: list[Any],
+    source_urls: list[str],
+    sources: list[SourceItem],
+) -> list[int]:
+    """Resolve a model's source-index convention without inventing attribution.
+
+    The canonical contract is zero-based indexing into ``source_urls``. Qwen can
+    occasionally emit one-based local positions or positions from the numbered
+    SOURCE ENTRIES catalog. Those alternatives are accepted only when the whole
+    scene set maps unambiguously back to URLs already selected in ``source_urls``.
+    Arbitrary clamping, modulo operations, and references to unselected sources
+    remain fail-closed because they could attach a claim to the wrong evidence.
+    """
+    raw_indices: list[int] = []
+    for scene in scenes_raw:
+        if not isinstance(scene, dict) or "source_index" not in scene:
+            raise LocalLLMError("Every scene requires an integer source_index")
+        value = scene["source_index"]
+        if isinstance(value, bool):
+            raise LocalLLMError("Every scene requires an integer source_index")
+        try:
+            index = int(value)
+        except (TypeError, ValueError) as exc:
+            raise LocalLLMError("Every scene requires an integer source_index") from exc
+        raw_indices.append(index)
+
+    if all(0 <= index < len(source_urls) for index in raw_indices):
+        return raw_indices
+
+    selected_index_by_url = {url: index for index, url in enumerate(source_urls)}
+    candidates: dict[str, tuple[int, ...]] = {}
+
+    if all(1 <= index <= len(source_urls) for index in raw_indices):
+        candidates["one-based source_urls"] = tuple(index - 1 for index in raw_indices)
+
+    for label, offset in (("zero-based SOURCE ENTRIES", 0), ("one-based SOURCE ENTRIES", 1)):
+        mapped: list[int] = []
+        for index in raw_indices:
+            source_position = index - offset
+            if not 0 <= source_position < len(sources):
+                mapped = []
+                break
+            selected_index = selected_index_by_url.get(sources[source_position].url)
+            if selected_index is None:
+                mapped = []
+                break
+            mapped.append(selected_index)
+        if mapped:
+            candidates[label] = tuple(mapped)
+
+    unique_mappings: dict[tuple[int, ...], list[str]] = {}
+    for label, mapping in candidates.items():
+        unique_mappings.setdefault(mapping, []).append(label)
+
+    if len(unique_mappings) == 1:
+        return list(next(iter(unique_mappings)))
+    if len(unique_mappings) > 1:
+        conventions = "; ".join(
+            f"{', '.join(labels)} -> {list(mapping)}"
+            for mapping, labels in unique_mappings.items()
+        )
+        raise LocalLLMError(
+            "Scene source_index convention is ambiguous; use zero-based positions "
+            f"from source_urls only. Candidates: {conventions}"
+        )
+
+    invalid = next(
+        (index for index in raw_indices if not 0 <= index < len(source_urls)),
+        raw_indices[0],
+    )
+    raise LocalLLMError(
+        f"Scene source_index out of range: {invalid}; valid zero-based source_urls "
+        f"range is 0-{len(source_urls) - 1}"
+    )
+
+
 def _package_from_raw(
     settings: Settings,
     sources: list[SourceItem],
@@ -241,11 +318,9 @@ def _package_from_raw(
     scenes_raw = raw["scenes"]
     if not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
         raise LocalLLMError("Exactly six scenes are required")
+    source_indices = _normalize_scene_source_indices(scenes_raw, source_urls, sources)
     scenes: list[Scene] = []
-    for scene in scenes_raw:
-        source_index = int(scene["source_index"])
-        if not 0 <= source_index < len(source_urls):
-            raise LocalLLMError(f"Scene source_index out of range: {source_index}")
+    for scene, source_index in zip(scenes_raw, source_indices, strict=True):
         scenes.append(
             Scene(
                 heading=str(scene["heading"])[:60],
@@ -274,14 +349,38 @@ def _package_from_raw(
     )
 
 
+def _selected_source_index_table(
+    previous: dict[str, Any],
+    source_payload: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected = previous.get("source_urls")
+    if not isinstance(selected, list):
+        return []
+    catalog = {str(item.get("url")): item for item in source_payload}
+    table: list[dict[str, Any]] = []
+    for source_index, raw_url in enumerate(selected):
+        url = str(raw_url)
+        item = catalog.get(url, {})
+        table.append(
+            {
+                "source_index": source_index,
+                "url": url,
+                "publisher": str(item.get("publisher") or ""),
+            }
+        )
+    return table
+
+
 def _repair_prompt(
     *,
     validation_error: str,
     previous: dict[str, Any],
-    source_payload: list[dict[str, str]],
+    source_payload: list[dict[str, Any]],
 ) -> str:
     current_word_count = _word_count(str(previous.get("narration") or ""))
     minimum_addition = max(0, NARRATION_TARGET_MIN_WORDS - current_word_count)
+    source_index_table = _selected_source_index_table(previous, source_payload)
+    valid_max = len(source_index_table) - 1
     return f"""
 Repair the previous JSON package so it passes the stated validation error. Return the COMPLETE corrected JSON object only, not a patch.
 
@@ -294,6 +393,16 @@ NARRATION REPAIR:
 - Add at least {minimum_addition} words when the previous narration is too short.
 - Do not merely append a fragment; preserve a natural hook, evidence, practical implication, caveat, and closing.
 - Count the final narration words before returning the JSON.
+
+SCENE SOURCE-INDEX REPAIR:
+- source_index is a zero-based position in the JSON package's own source_urls array.
+- source_index is NOT a SOURCE ENTRIES source_id and must never copy that catalog identifier.
+- The only valid source_index values for this package are 0 through {valid_max}.
+- Replace every scene source_index using the exact VALID SCENE SOURCE INDEX TABLE below.
+- Never clamp, wrap, or point a scene at a source that does not support its claim.
+
+VALID SCENE SOURCE INDEX TABLE:
+{json.dumps(source_index_table, ensure_ascii=False)}
 
 NON-NEGOTIABLE RULES:
 - Use only source URLs and publisher names copied exactly from SOURCE ENTRIES.
@@ -313,15 +422,17 @@ SOURCE ENTRIES:
 
 
 def generate_package(settings: Settings, sources: list[SourceItem], strategy: Strategy) -> VideoPackage:
+    source_candidates = sources[:30]
     source_payload = [
         {
+            "source_id": source_id,
             "publisher": item.publisher,
             "title": item.title,
             "url": item.url,
             "published_at": item.published_at.isoformat(),
             "summary": item.summary,
         }
-        for item in sources[:30]
+        for source_id, item in enumerate(source_candidates)
     ]
     cta = (
         f"Use this owner-controlled CTA exactly once: {settings.monetization_label}: {settings.monetization_url}"
@@ -349,7 +460,14 @@ Return one JSON object containing:
 - top_comment: one useful question plus CTA when configured
 - source_urls: 2-5 URLs copied exactly from the supplied entries
 - source_publishers: publisher names corresponding one-for-one with source_urls
-- scenes: exactly 6 objects with heading <=5 words, body <=18 words, a procedural visual direction, and source_index. source_index must identify the exact source_urls entry supporting that scene. Do not request copyrighted footage, logos, screenshots, or real-person likenesses.
+- scenes: exactly 6 objects with heading <=5 words, body <=18 words, a procedural visual direction, and source_index. Do not request copyrighted footage, logos, screenshots, or real-person likenesses.
+
+SOURCE-INDEX CONTRACT:
+- SOURCE ENTRIES source_id values identify catalog rows only.
+- scene.source_index must NOT copy source_id.
+- scene.source_index is the zero-based position in your returned source_urls array.
+- Valid scene.source_index values are therefore 0 through len(source_urls)-1.
+- Example: when source_urls is ["https://b.example", "https://a.example"], the first URL uses source_index 0 and the second uses source_index 1, regardless of their SOURCE ENTRIES source_id values.
 
 When no topic satisfies the evidence and quality rules, return only {{"skip_reason":"specific reason"}}.
 
@@ -364,7 +482,7 @@ SOURCE ENTRIES:
         if package_attempt == 2:
             raw = _stabilize_near_minimum_narration(raw)
         try:
-            return _package_from_raw(settings, sources, raw)
+            return _package_from_raw(settings, source_candidates, raw)
         except LocalLLMError as exc:
             if raw.get("skip_reason"):
                 raise
