@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -154,9 +154,9 @@ def _repair_scene_attribution(
 ) -> list[int]:
     """Map every scene to an exact selected URL, then convert URLs to indices.
 
-    Numeric model indices are never clamped or guessed. The focused pass may select
-    only URLs already validated by the package. Any unsupported scene or unknown URL
-    fails closed before voice generation.
+    Numeric model indices are never clamped, shifted, wrapped, or guessed. The
+    focused pass may select only URLs already validated by the package. Any
+    unsupported scene or unknown URL fails closed before voice generation.
     """
     if not source_urls:
         raise local_llm.LocalLLMError("Scene attribution requires selected source URLs")
@@ -242,36 +242,105 @@ SELECTED EVIDENCE:
     ) from last_error
 
 
+def _strict_scene_indices(
+    scenes_raw: list[dict[str, Any]],
+    source_count: int,
+) -> list[dict[str, Any]]:
+    """Preserve model integers exactly; validation occurs in _package_from_raw."""
+    del source_count
+    for scene in scenes_raw:
+        value = scene.get("source_index")
+        if isinstance(value, bool):
+            raise local_llm.LocalLLMError(
+                "Every scene requires an integer source_index"
+            )
+        try:
+            int(value)
+        except (TypeError, ValueError) as exc:
+            raise local_llm.LocalLLMError(
+                "Every scene requires an integer source_index"
+            ) from exc
+    return scenes_raw
+
+
+def _copy_with_indices(raw: dict[str, Any], indices: list[int]) -> dict[str, Any]:
+    repaired = json.loads(json.dumps(raw))
+    scenes = repaired.get("scenes")
+    if not isinstance(scenes, list) or len(scenes) != 6:
+        raise local_llm.LocalLLMError(
+            "Exact attribution repair requires exactly six scenes"
+        )
+    for scene, source_index in zip(scenes, indices, strict=True):
+        if not isinstance(scene, dict):
+            raise local_llm.LocalLLMError(
+                "Exact attribution repair encountered a non-object scene"
+            )
+        scene["source_index"] = source_index
+    return repaired
+
+
+def _is_scene_index_failure(exc: Exception) -> bool:
+    message = str(exc)
+    return message.startswith("Scene source_index") or message.startswith(
+        "Every scene requires an integer source_index"
+    )
+
+
 def generate_package(
     settings: Settings,
     sources: list[SourceItem],
     strategy: Strategy,
 ) -> VideoPackage:
-    """Generate a package with exact-URL fallback for invalid numeric attribution."""
+    """Generate a package with strict integers and exact-URL attribution repair.
+
+    Production callers use this wrapper instead of local_llm.generate_package. It
+    intercepts complete package validation so local_llm cannot reinterpret an
+    all-nonzero zero-based mapping as one-based. Invalid attribution is repaired
+    only with exact URLs from the package's already validated evidence set.
+    """
     with _GENERATION_LOCK:
+        original_package_from_raw: Callable[..., VideoPackage] = local_llm._package_from_raw
         original_normalizer = local_llm._normalize_scene_source_indices
 
-        def normalize_with_exact_url_repair(
-            scenes_raw: list[Any],
-            source_urls: list[str],
-            normalized_sources: list[SourceItem],
-        ) -> list[int]:
+        def package_with_exact_attribution(
+            raw: dict[str, Any],
+            package_settings: Settings,
+            package_sources: list[SourceItem],
+            package_strategy: Strategy,
+        ) -> VideoPackage:
+            local_llm._normalize_scene_source_indices = _strict_scene_indices
             try:
-                return original_normalizer(
-                    scenes_raw,
-                    source_urls,
-                    normalized_sources,
+                return original_package_from_raw(
+                    raw,
+                    package_settings,
+                    package_sources,
+                    package_strategy,
                 )
-            except local_llm.LocalLLMError:
-                return _repair_scene_attribution(
-                    settings,
-                    scenes_raw,
-                    source_urls,
-                    normalized_sources,
+            except local_llm.LocalLLMError as exc:
+                if not _is_scene_index_failure(exc):
+                    raise
+                scenes = raw.get("scenes")
+                source_urls = raw.get("source_urls")
+                if not isinstance(scenes, list) or not isinstance(source_urls, list):
+                    raise
+                indices = _repair_scene_attribution(
+                    package_settings,
+                    scenes,
+                    [str(url) for url in source_urls],
+                    package_sources,
+                )
+                repaired = _copy_with_indices(raw, indices)
+                return original_package_from_raw(
+                    repaired,
+                    package_settings,
+                    package_sources,
+                    package_strategy,
                 )
 
-        local_llm._normalize_scene_source_indices = normalize_with_exact_url_repair
+        local_llm._package_from_raw = package_with_exact_attribution
+        local_llm._normalize_scene_source_indices = _strict_scene_indices
         try:
             return local_llm.generate_package(settings, sources, strategy)
         finally:
+            local_llm._package_from_raw = original_package_from_raw
             local_llm._normalize_scene_source_indices = original_normalizer
