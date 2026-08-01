@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -23,6 +24,20 @@ class SourceItem:
     @property
     def fingerprint(self) -> str:
         return hashlib.sha256(f"{self.publisher}|{self.title}|{self.url}".encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class SourceSelection:
+    items: tuple[SourceItem, ...]
+    publishers: frozenset[str]
+    max_age_hours: int
+
+    @property
+    def publisher_count(self) -> int:
+        return len(self.publishers)
+
+
+FetchRecent = Callable[..., list[SourceItem]]
 
 
 FEEDS: tuple[tuple[str, str], ...] = (
@@ -114,3 +129,46 @@ def fetch_recent(*, max_age_hours: int, timeout_seconds: float = 10.0) -> list[S
 
 def publishers(items: Iterable[SourceItem]) -> set[str]:
     return {item.publisher for item in items}
+
+
+def fetch_diverse_recent(
+    *,
+    max_age_hours: int,
+    min_publishers: int,
+    fallback_max_age_hours: int = 168,
+    timeout_seconds: float = 10.0,
+    fetcher: FetchRecent = fetch_recent,
+) -> SourceSelection:
+    """Select fresh sources, expanding once when the primary window lacks diversity.
+
+    The fallback is bounded to seven days and never weakens the independent-publisher
+    requirement. Callers remain responsible for failing closed when the returned
+    selection still contains fewer than ``min_publishers`` publishers.
+    """
+    if not 1 <= max_age_hours <= 168:
+        raise ValueError("max_age_hours must be between 1 and 168")
+    if min_publishers < 1:
+        raise ValueError("min_publishers must be at least 1")
+
+    fallback_window = min(max(max_age_hours, fallback_max_age_hours), 168)
+    windows = (max_age_hours,) if fallback_window == max_age_hours else (max_age_hours, fallback_window)
+    best: SourceSelection | None = None
+
+    for window in windows:
+        items = tuple(fetcher(max_age_hours=window, timeout_seconds=timeout_seconds))
+        selection = SourceSelection(
+            items=items,
+            publishers=frozenset(publishers(items)),
+            max_age_hours=window,
+        )
+        if best is None or (selection.publisher_count, len(selection.items)) > (
+            best.publisher_count,
+            len(best.items),
+        ):
+            best = selection
+        if selection.publisher_count >= min_publishers:
+            return selection
+
+    if best is None:  # Defensive: windows always contains at least the primary window.
+        raise RuntimeError("Source selection did not execute")
+    return best
