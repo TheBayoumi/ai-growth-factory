@@ -40,6 +40,19 @@ class LocalLLMTests(unittest.TestCase):
             ],
         }
 
+    @staticmethod
+    def catalog_sources(count: int) -> list[SourceItem]:
+        return [
+            SourceItem(
+                f"Publisher {index}",
+                f"Release {index}",
+                f"https://source-{index}.example/news",
+                f"Primary details for source {index}",
+                datetime.now(timezone.utc),
+            )
+            for index in range(count)
+        ]
+
     def test_extracts_embedded_json(self):
         self.assertEqual(_extract_json('prefix {"ok": true} suffix'), {"ok": True})
 
@@ -67,6 +80,17 @@ class LocalLLMTests(unittest.TestCase):
         self.assertIn("https://a.example/news", package.description)
         self.assertEqual(len(package.scenes), 6)
 
+    def test_initial_prompt_separates_catalog_ids_from_package_indices(self):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", return_value=self.package()
+        ) as chat:
+            generate_package(Settings.from_env(), self.sources, self.strategy)
+
+        prompt = chat.call_args.args[1]
+        self.assertIn("source_index must NOT copy source_id", prompt)
+        self.assertIn("zero-based position in your returned source_urls", prompt)
+        self.assertIn('"source_id": 0', prompt)
+
     def test_package_repairs_undersized_narration(self):
         undersized = self.package()
         undersized["narration"] = " ".join(f"short{index}" for index in range(96))
@@ -81,6 +105,23 @@ class LocalLLMTests(unittest.TestCase):
         self.assertIn("Narration word count outside quality gate: 96", repair_prompt)
         self.assertIn("145-165", repair_prompt)
         self.assertIn("contains 96", repair_prompt)
+
+    def test_source_index_repair_prompt_contains_exact_local_table(self):
+        invalid = self.package()
+        invalid["scenes"][2]["source_index"] = 9
+        corrected = self.package()
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", side_effect=[invalid, corrected]
+        ) as chat:
+            package = generate_package(Settings.from_env(), self.sources, self.strategy)
+
+        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
+        repair_prompt = chat.call_args_list[1].args[1]
+        self.assertIn("VALID SCENE SOURCE INDEX TABLE", repair_prompt)
+        self.assertIn("source_index is NOT a SOURCE ENTRIES source_id", repair_prompt)
+        self.assertIn('"source_index": 0', repair_prompt)
+        self.assertIn('"url": "https://a.example/news"', repair_prompt)
+        self.assertIn("only valid source_index values for this package are 0 through 1", repair_prompt)
 
     def test_final_near_threshold_script_gets_claim_neutral_close(self):
         near_threshold = self.package()
@@ -104,6 +145,69 @@ class LocalLLMTests(unittest.TestCase):
         ) as chat:
             with self.assertRaisesRegex(LocalLLMError, "failed after 3 attempts"):
                 generate_package(Settings.from_env(), self.sources, self.strategy)
+        self.assertEqual(chat.call_count, 3)
+
+    def test_package_normalizes_one_based_source_urls_indices(self):
+        raw = self.package()
+        for index, scene in enumerate(raw["scenes"]):
+            scene["source_index"] = index % 2 + 1
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", return_value=raw
+        ):
+            package = generate_package(Settings.from_env(), self.sources, self.strategy)
+
+        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
+
+    def test_package_normalizes_selected_zero_based_catalog_ids(self):
+        sources = self.catalog_sources(13)
+        raw = self.package()
+        raw["source_urls"] = [sources[12].url, sources[3].url]
+        raw["source_publishers"] = [sources[12].publisher, sources[3].publisher]
+        for index, scene in enumerate(raw["scenes"]):
+            scene["source_index"] = 12 if index % 2 == 0 else 3
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", return_value=raw
+        ):
+            package = generate_package(Settings.from_env(), sources, self.strategy)
+
+        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
+
+    def test_package_normalizes_selected_one_based_catalog_ids(self):
+        sources = self.catalog_sources(12)
+        raw = self.package()
+        raw["source_urls"] = [sources[11].url, sources[2].url]
+        raw["source_publishers"] = [sources[11].publisher, sources[2].publisher]
+        for index, scene in enumerate(raw["scenes"]):
+            scene["source_index"] = 12 if index % 2 == 0 else 3
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", return_value=raw
+        ):
+            package = generate_package(Settings.from_env(), sources, self.strategy)
+
+        self.assertEqual([scene.source_index for scene in package.scenes], [0, 1, 0, 1, 0, 1])
+
+    def test_package_rejects_ambiguous_catalog_index_convention(self):
+        now = datetime.now(timezone.utc)
+        sources = [
+            SourceItem("A", "A", "https://a.example", "A", now),
+            SourceItem("B", "B", "https://b.example", "B", now),
+            SourceItem("C", "C", "https://c.example", "C", now),
+            SourceItem("B", "B duplicate", "https://b.example", "B", now),
+        ]
+        raw = self.package()
+        raw["source_urls"] = ["https://b.example", "https://c.example"]
+        raw["source_publishers"] = ["B", "C"]
+        for index, scene in enumerate(raw["scenes"]):
+            scene["source_index"] = 2 if index % 2 == 0 else 3
+
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "factory.local_llm._chat", return_value=raw
+        ) as chat:
+            with self.assertRaisesRegex(LocalLLMError, "convention is ambiguous"):
+                generate_package(Settings.from_env(), sources, self.strategy)
         self.assertEqual(chat.call_count, 3)
 
     def test_package_rejects_scene_source_index_out_of_range(self):
