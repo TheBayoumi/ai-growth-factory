@@ -6,7 +6,14 @@ from array import array
 from pathlib import Path
 from unittest.mock import patch
 
-from factory.audio_qc import analyze_audio, split_narration
+from factory.audio_qc import (
+    AudioQCError,
+    analyze_audio,
+    correct_audio_tempo,
+    split_narration,
+    tempo_correction_factor,
+    wav_duration,
+)
 from factory.config import Settings
 
 
@@ -50,6 +57,61 @@ class AudioQCTests(unittest.TestCase):
             metrics = analyze_audio(path, narration=narration, settings=settings)
             self.assertTrue(metrics.passed, metrics.failures)
             self.assertAlmostEqual(metrics.estimated_wpm, 155.0, places=1)
+
+    def test_tempo_factor_corrects_the_real_117_wpm_canary_case(self):
+        factor = tempo_correction_factor(
+            estimated_wpm=117.0,
+            target_wpm=155,
+            tolerance=32,
+        )
+        self.assertEqual(factor, 1.15)
+        self.assertGreaterEqual(117.0 * factor, 123.0)
+        self.assertLessEqual(117.0 * factor, 187.0)
+
+    def test_tempo_factor_refuses_extreme_or_already_valid_pace(self):
+        self.assertIsNone(
+            tempo_correction_factor(
+                estimated_wpm=155.0,
+                target_wpm=155,
+                tolerance=32,
+            )
+        )
+        self.assertIsNone(
+            tempo_correction_factor(
+                estimated_wpm=70.0,
+                target_wpm=155,
+                tolerance=32,
+            )
+        )
+        self.assertIsNone(
+            tempo_correction_factor(
+                estimated_wpm=250.0,
+                target_wpm=155,
+                tolerance=32,
+            )
+        )
+
+    def test_pitch_preserving_tempo_filter_changes_duration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.wav"
+            corrected = Path(temporary) / "corrected.wav"
+            write_tone(source, 4.0)
+
+            correct_audio_tempo(source, corrected, factor=1.15)
+
+            self.assertTrue(corrected.exists())
+            self.assertAlmostEqual(wav_duration(corrected), 4.0 / 1.15, delta=0.12)
+
+    def test_tempo_filter_rejects_unbounded_adjustments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.wav"
+            write_tone(source, 1.0)
+            with self.assertRaisesRegex(AudioQCError, "between 0.85 and 1.15"):
+                correct_audio_tempo(
+                    source,
+                    Path(temporary) / "invalid.wav",
+                    factor=1.30,
+                )
 
 
 if __name__ == "__main__":
