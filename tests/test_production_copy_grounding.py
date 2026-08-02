@@ -2,20 +2,32 @@ import unittest
 from datetime import datetime, timezone
 
 from factory.feeds import SourceItem
+from factory.local_llm import LocalLLMError
 from factory.models import Scene, VideoPackage
 from factory.production_content import _ground_generic_copy, _validate_publishable_content
 
 
 class ProductionCopyGroundingTests(unittest.TestCase):
-    def test_generic_slogan_is_replaced_with_validated_source_subject(self):
-        source = SourceItem(
+    def setUp(self):
+        now = datetime.now(timezone.utc)
+        self.openai = SourceItem(
             publisher="OpenAI",
             title="Realtime API Adds Reliable Tool Calling",
             url="https://example.com/realtime-tools",
             summary="The Realtime API now supports more reliable tool calls.",
-            published_at=datetime.now(timezone.utc),
+            published_at=now,
         )
-        narration = (
+        self.microsoft = SourceItem(
+            publisher="Microsoft Research",
+            title="EvoLib Evaluates Automated Library Improvement",
+            url="https://example.com/evolib",
+            summary="EvoLib studies automated improvement of software libraries.",
+            published_at=now,
+        )
+
+    @staticmethod
+    def _narration(slogan: str = "shaping the future") -> str:
+        return (
             "OpenAI released Realtime API updates for reliable tool calling. "
             "The change gives voice agents a clearer way to invoke approved tools. "
             "Developers can connect live conversations to structured actions with fewer ambiguous handoffs. "
@@ -23,33 +35,80 @@ class ProductionCopyGroundingTests(unittest.TestCase):
             "The updated interface keeps tool results inside the conversation while preserving explicit control. "
             "Teams can now test failures, retries, and confirmations against a concrete API contract. "
             "Evaluators also gain repeatable checkpoints for permission handling, malformed arguments, and delayed tool responses before a customer ever sees them. "
-            "This is not just shaping the future; it creates a measurable workflow for production voice agents. "
+            f"This is not just {slogan}; it creates a measurable workflow for production voice agents. "
             "The practical question is whether latency and reliability hold. "
             "Early deployments should track successful calls, correction rates, and user confirmations instead of relying on polished demos alone. "
             "Follow for the next verified deployment result and the exact numbers that matter."
         )
-        package = VideoPackage(
+
+    def _package(
+        self,
+        *,
+        narration: str,
+        sources: list[SourceItem] | None = None,
+    ) -> VideoPackage:
+        selected = sources or [self.openai]
+        return VideoPackage(
             topic="Realtime API tool calling",
             narration=narration,
             title="OpenAI Realtime API Is Shaping the Future",
-            description="A focused explanation. https://example.com/realtime-tools",
+            description="A focused explanation. " + " ".join(source.url for source in selected),
             tags=["OpenAI", "Realtime API", "voice agents", "tool calling"],
             thumbnail_text="Realtime Tool Calling",
             top_comment="Where would you use this?",
             scenes=[
-                Scene(f"Scene {index + 1}", f"Distinct evidence point {index + 1}.", "diagram", 0)
+                Scene(
+                    f"Scene {index + 1}",
+                    f"Distinct evidence point {index + 1}.",
+                    "diagram",
+                    index % len(selected),
+                )
                 for index in range(6)
             ],
-            source_urls=[source.url],
-            source_publishers=[source.publisher],
+            source_urls=[source.url for source in selected],
+            source_publishers=[source.publisher for source in selected],
         )
 
-        grounded = _ground_generic_copy(package, [source])
+    def test_generic_slogan_is_replaced_with_validated_source_subject(self):
+        package = self._package(narration=self._narration())
+
+        grounded = _ground_generic_copy(package, [self.openai])
 
         self.assertNotIn("shaping the future", grounded.title.casefold())
         self.assertNotIn("shaping the future", grounded.narration.casefold())
         self.assertIn("Realtime API", grounded.title)
-        _validate_publishable_content(grounded, [source])
+        _validate_publishable_content(grounded, [self.openai])
+
+    def test_future_of_work_replacement_cannot_corrupt_larger_words(self):
+        package = self._package(
+            narration=self._narration("reshaping the future of work")
+        )
+
+        grounded = _ground_generic_copy(package, [self.openai])
+        lowered = grounded.narration.casefold()
+
+        self.assertIn("changing how people work", lowered)
+        self.assertNotIn("rechanging", lowered)
+        self.assertNotIn("is used of", lowered)
+        self.assertNotIn("shaping the future", lowered)
+        _validate_publishable_content(grounded, [self.openai])
+
+    def test_unsupported_cross_source_collaboration_is_rejected(self):
+        narration = self._narration("changing current practice").replace(
+            "OpenAI released Realtime API updates for reliable tool calling.",
+            "The collaboration between OpenAI and Microsoft Research released Realtime API updates for reliable tool calling.",
+        )
+        package = self._package(
+            narration=narration,
+            sources=[self.openai, self.microsoft],
+        )
+        grounded = _ground_generic_copy(package, [self.openai, self.microsoft])
+
+        with self.assertRaisesRegex(
+            LocalLLMError,
+            "unsupported cross-source relationship",
+        ):
+            _validate_publishable_content(grounded, [self.openai, self.microsoft])
 
 
 if __name__ == "__main__":
