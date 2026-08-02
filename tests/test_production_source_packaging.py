@@ -12,6 +12,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "production_content.py",
             "production_pacing.py",
             "production_voice_repair.py",
+            "production_visual_routing.py",
             "production_renderer.py",
             "production_runtime.py",
             "visual_prompt.py",
