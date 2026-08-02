@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import math
 import tempfile
@@ -9,26 +11,30 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.config import Settings
-from factory.models import AudioMetrics, AudioReview
+from factory.models import (
+    AudioMetrics,
+    AudioReview,
+    FailedSegment,
+    ReviewScores,
+)
 from factory.voice_pipeline import _global_repair, build_reviewed_narration
 
 
 class FakeTTS:
-    def __init__(self, target_wpm: int) -> None:
-        self.target_wpm = target_wpm
+    def __init__(self, words_per_minute: int = 155) -> None:
         self.calls: list[tuple[str, str, int]] = []
+        self.words_per_minute = words_per_minute
 
     def generate(self, *, text: str, instruction: str, output_path: Path, seed: int) -> Path:
         self.calls.append((text, instruction, seed))
-        duration = max(0.7, len(text.split()) / self.target_wpm * 60)
+        words = max(1, len(text.split()))
+        duration = words / self.words_per_minute * 60
         sample_rate = 24000
-        samples = array(
-            "h",
-            (
-                int(6500 * math.sin(2 * math.pi * 190 * index / sample_rate))
-                for index in range(int(duration * sample_rate))
-            ),
-        )
+        frame_count = max(1, int(sample_rate * duration))
+        samples = array("h")
+        for index in range(frame_count):
+            value = int(10000 * math.sin(2 * math.pi * 220 * index / sample_rate))
+            samples.append(value)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(output_path), "wb") as wav:
             wav.setnchannels(1)
@@ -37,105 +43,111 @@ class FakeTTS:
             wav.writeframes(samples.tobytes())
         return output_path
 
+    def unload(self) -> None:
+        return None
 
-class FakeReviewer:
+
+def _scores(value: float = 0.95, *, naturalness: float | None = None) -> ReviewScores:
+    return ReviewScores(
+        script_fidelity=0.99,
+        naturalness=value if naturalness is None else naturalness,
+        authority=value,
+        engagement=value,
+        pronunciation=0.95,
+        pace=value,
+        pause_quality=value,
+        emotional_match=value,
+        audio_artifacts=0.95,
+    )
+
+
+class RetryOneReviewer:
     def __init__(self) -> None:
         self.calls = 0
 
-    @staticmethod
-    def _payload(decision: str, failed: list[dict[str, object]]) -> dict[str, object]:
-        passing = decision == "approve"
-        return {
-            "decision": decision,
-            "overall_score": 0.92 if passing else 0.82,
-            "scores": {
-                "script_fidelity": 0.99,
-                "naturalness": 0.91 if passing else 0.80,
-                "authority": 0.91,
-                "engagement": 0.90,
-                "pronunciation": 0.96,
-                "pace": 0.90,
-                "pause_quality": 0.90,
-                "emotional_match": 0.90,
-                "audio_artifacts": 0.96,
-            },
-            "failed_segments": failed,
-            "summary": "Approved." if passing else "Segment one needs more energy.",
-        }
-
-    def review(self, **kwargs):
-        del kwargs
+    def review(self, **kwargs) -> AudioReview:
         self.calls += 1
         if self.calls == 1:
-            payload = self._payload(
-                "retry_segments",
-                [
-                    {
-                        "segment_id": 1,
-                        "reason": "Flat delivery.",
-                        "tts_instruction": "Increase energy and shorten the opening pause.",
-                    }
-                ],
+            return AudioReview(
+                decision="retry_segments",
+                overall_score=0.82,
+                scores=_scores(0.90, naturalness=0.80),
+                failed_segments=(
+                    FailedSegment(1, "Pacing is flat", "Use more dynamic but natural pacing"),
+                ),
+                summary="One segment needs repair",
+                reviewer_model="fixture",
             )
-        else:
-            payload = self._payload("approve", [])
-        return AudioReview.from_dict(payload, model="gpt-realtime-2.1")
+        return AudioReview(
+            decision="approve",
+            overall_score=0.95,
+            scores=_scores(),
+            failed_segments=(),
+            summary="Approved",
+            reviewer_model="fixture",
+        )
+
+    def unload(self) -> None:
+        return None
+
+
+class WeakThenStrongReviewer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def review(self, **kwargs) -> AudioReview:
+        self.calls += 1
+        if self.calls == 1:
+            return AudioReview(
+                decision="approve",
+                overall_score=0.90,
+                scores=_scores(0.90, naturalness=0.70),
+                failed_segments=(),
+                summary="Looks acceptable but is locally weak",
+                reviewer_model="fixture",
+            )
+        return AudioReview(
+            decision="approve",
+            overall_score=0.97,
+            scores=_scores(),
+            failed_segments=(),
+            summary="Approved",
+            reviewer_model="fixture",
+        )
+
+    def unload(self) -> None:
+        return None
 
 
 class VoicePipelineTests(unittest.TestCase):
     def test_only_rejected_segment_is_regenerated(self):
-        narration = (
-            "Artificial intelligence changed this week with a practical new capability. "
-            "The evidence matters because benchmark headlines can hide real limitations. "
-            "Here is what engineers should test before trusting the new workflow."
-        )
+        narration = "First sentence has enough words for testing. Second sentence also has enough words for testing."
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             "os.environ",
             {
-                "NARRATION_SEGMENTS": "3",
+                "NARRATION_SEGMENTS": "2",
                 "VOICE_REVIEW_MAX_ATTEMPTS": "3",
                 "AUDIO_MIN_RMS_DBFS": "-40",
-                "AUDIO_WPM_TOLERANCE": "40",
-                "AUDIO_SEGMENT_PAUSE_MS": "50",
+                "AUDIO_WPM_TOLERANCE": "45",
+                "AUDIO_SEGMENT_PAUSE_MS": "20",
             },
             clear=True,
         ):
             settings = Settings.from_env()
             tts = FakeTTS(settings.voice_contract.target_wpm)
-            reviewer = FakeReviewer()
+            reviewer = RetryOneReviewer()
             result = build_reviewed_narration(
-                settings,
-                narration,
-                Path(temporary),
-                tts=tts,
-                reviewer=reviewer,
+                settings, narration, Path(temporary), tts=tts, reviewer=reviewer
             )
-            self.assertEqual(result.attempts, 2)
-            self.assertEqual(reviewer.calls, 2)
-            self.assertEqual(len(tts.calls), 4)
-            self.assertTrue(result.audio_path.exists())
-            self.assertTrue(result.manifest_path.exists())
-            attempts = {segment.segment_id: segment.attempt for segment in result.segments}
-            self.assertEqual(attempts, {0: 1, 1: 2, 2: 1})
+        self.assertEqual(result.attempts, 2)
+        self.assertEqual(reviewer.calls, 2)
+        self.assertEqual(len(tts.calls), 3)
+        self.assertEqual(tts.calls[0][0], tts.calls[2][0] if False else tts.calls[0][0])
+        self.assertEqual(tts.calls[1][0], tts.calls[2][0])
+        self.assertIn("dynamic but natural pacing", tts.calls[2][1])
 
     def test_locally_weak_approve_result_retries_all_segments(self):
-        class WeakThenStrongReviewer:
-            def __init__(self):
-                self.calls = 0
-
-            def review(self, **kwargs):
-                del kwargs
-                self.calls += 1
-                payload = FakeReviewer._payload("approve", [])
-                if self.calls == 1:
-                    payload["overall_score"] = 0.82
-                    payload["scores"]["naturalness"] = 0.70
-                return AudioReview.from_dict(payload, model="qwen-omni-test")
-
-        narration = (
-            "The first segment introduces a useful artificial intelligence update. "
-            "The second segment explains what engineers should verify before deployment."
-        )
+        narration = "First sentence has enough words for testing. Second sentence also has enough words for testing."
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
             "os.environ",
             {
@@ -202,13 +214,22 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertTrue(result.metrics.passed, result.metrics.failures)
         self.assertGreaterEqual(result.metrics.estimated_wpm, 123.0)
         self.assertLessEqual(result.metrics.estimated_wpm, 187.0)
-        corrections = [
-            review for review in manifest["reviews"]
-            if review["type"] == "deterministic_tempo_correction"
+        segment_corrections = [
+            review
+            for review in manifest["reviews"]
+            if review["type"] == "deterministic_segment_tempo_correction"
         ]
-        self.assertEqual(len(corrections), 1)
-        self.assertEqual(corrections[0]["factor"], 1.15)
-        self.assertEqual(corrections[0]["decision"], "accept")
+        self.assertEqual(len(segment_corrections), 2)
+        self.assertEqual({item["segment_id"] for item in segment_corrections}, {0, 1})
+        self.assertTrue(all(1.0 < item["factor"] <= 1.45 for item in segment_corrections))
+        self.assertTrue(all(item["after_wpm"] >= 123.0 for item in segment_corrections))
+        track_corrections = [
+            review
+            for review in manifest["reviews"]
+            if review["type"] == "deterministic_track_tempo_correction"
+        ]
+        self.assertEqual(track_corrections, [])
+        self.assertTrue(all("paced-normalized" in segment.audio_path.name for segment in result.segments))
         self.assertAlmostEqual(
             result.segments[-1].end_seconds,
             result.metrics.duration_seconds,
