@@ -7,9 +7,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 from .visual_prompt import VisualPlan
+from .visual_prompt_compiler import compile_image_prompt
 
 
 class ImageGenerationError(RuntimeError):
@@ -28,6 +29,13 @@ class KeyframeAsset:
     entropy: float
     prompt: str
     negative_prompt: str
+    director_prompt: str = ""
+    prompt_word_count: int = 0
+    prompt_word_budget: int = 0
+    prompt_compiler_version: str = ""
+    caption_zone_detail_before: float = 0.0
+    caption_zone_detail_after: float = 0.0
+    caption_zone_repaired: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -64,6 +72,52 @@ def _hamming(left: int, right: int) -> int:
     return (left ^ right).bit_count()
 
 
+def _detail_score(image: Image.Image) -> float:
+    edges = image.convert("L").filter(ImageFilter.FIND_EDGES)
+    return float(ImageStat.Stat(edges).mean[0])
+
+
+def _caption_safe_zone(image: Image.Image, *, start_ratio: float = 0.68) -> tuple[Image.Image, float, float]:
+    """Feather the lower third into stable negative space for later ASS captions.
+
+    Prompt compliance alone is probabilistic. This deterministic post-process preserves
+    the upper visual while softly reducing high-frequency detail and luminance toward the
+    bottom edge. It adds no text and avoids an abrupt rectangular overlay.
+    """
+    source = image.convert("RGB")
+    width, height = source.size
+    start_y = max(1, min(height - 2, round(height * start_ratio)))
+    zone = source.crop((0, start_y, width, height))
+    before = _detail_score(zone)
+    blurred = zone.filter(ImageFilter.GaussianBlur(radius=max(9.0, width / 58.0)))
+
+    zone_height = zone.height
+    blur_mask = Image.new("L", zone.size, 0)
+    dark_mask = Image.new("L", zone.size, 0)
+    blur_draw = ImageDraw.Draw(blur_mask)
+    dark_draw = ImageDraw.Draw(dark_mask)
+    denominator = max(1, zone_height - 1)
+    for row in range(zone_height):
+        progress = row / denominator
+        eased = progress * progress * (3.0 - 2.0 * progress)
+        blur_alpha = round(225 * eased)
+        dark_alpha = round(112 * eased)
+        blur_draw.line((0, row, width, row), fill=blur_alpha)
+        dark_draw.line((0, row, width, row), fill=dark_alpha)
+
+    softened = Image.composite(blurred, zone, blur_mask)
+    darkened = Image.composite(Image.new("RGB", zone.size, (5, 7, 12)), softened, dark_mask)
+    result = source.copy()
+    result.paste(darkened, (0, start_y))
+    after = _detail_score(darkened)
+    if before >= 4.0 and after > before * 0.94:
+        raise ImageGenerationError(
+            "Caption-safe lower third remained too detailed after deterministic repair: "
+            f"before={before:.3f}, after={after:.3f}"
+        )
+    return result, before, after
+
+
 def _validate_keyframe(path: Path, *, width: int, height: int) -> tuple[float, int]:
     if not path.is_file() or path.stat().st_size < 80_000:
         raise ImageGenerationError(f"Generated keyframe is missing or too small: {path}")
@@ -98,14 +152,20 @@ def _materialize_assets(
     assets: list[KeyframeAsset] = []
     hashes: list[int] = []
     for scene in plan.scenes:
+        executable = compile_image_prompt(scene.image_prompt, scene.negative_prompt)
         try:
-            image = infer(scene.image_prompt, scene.negative_prompt, scene.seed).convert("RGB")
+            image = infer(
+                executable.compiled_prompt,
+                executable.negative_prompt,
+                scene.seed,
+            ).convert("RGB")
         except Exception as exc:
             raise ImageGenerationError(
                 f"{backend} failed for scene {scene.scene_index}: {exc}"
             ) from exc
         if image.size != (plan.width, plan.height):
             image = image.resize((plan.width, plan.height), Image.Resampling.LANCZOS)
+        image, detail_before, detail_after = _caption_safe_zone(image)
         path = output_dir / f"scene-{scene.scene_index:02d}-keyframe.png"
         image.save(path, format="PNG", optimize=True)
         entropy, image_hash = _validate_keyframe(path, width=plan.width, height=plan.height)
@@ -124,8 +184,15 @@ def _materialize_assets(
                 height=plan.height,
                 sha256=_sha256(path),
                 entropy=round(entropy, 4),
-                prompt=scene.image_prompt,
-                negative_prompt=scene.negative_prompt,
+                prompt=executable.compiled_prompt,
+                negative_prompt=executable.negative_prompt,
+                director_prompt=executable.director_prompt,
+                prompt_word_count=executable.word_count,
+                prompt_word_budget=executable.word_budget,
+                prompt_compiler_version=executable.compiler_version,
+                caption_zone_detail_before=round(detail_before, 4),
+                caption_zone_detail_after=round(detail_after, 4),
+                caption_zone_repaired=True,
             )
         )
 
@@ -136,6 +203,12 @@ def _materialize_assets(
         "width": plan.width,
         "height": plan.height,
         "captions_or_text_requested": False,
+        "prompt_compiler_version": assets[0].prompt_compiler_version if assets else None,
+        "caption_safe_zone": {
+            "start_ratio": 0.68,
+            "deterministic_repair": True,
+            "text_added": False,
+        },
         "assets": [asset.as_dict() for asset in assets],
     }
     (output_dir / "keyframe-manifest.json").write_text(

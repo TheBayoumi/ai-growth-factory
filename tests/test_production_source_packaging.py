@@ -21,6 +21,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "trend_sources.py",
             "trend_ranking.py",
             "visual_prompt.py",
+            "visual_prompt_compiler.py",
             "image_generator.py",
             "video_generator.py",
             "caption_renderer.py",
@@ -53,6 +54,14 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             workflow.index("Autonomous visual pipeline import preflight passed"),
             workflow.index("Deploy A10 production worker"),
         )
+
+    def test_modal_worker_pins_and_preflights_wan_exporter(self):
+        source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
+        project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"imageio==2.37.0"', source)
+        self.assertIn('"imageio==2.37.0"', project)
+        self.assertIn("import decord, imageio, imageio_ffmpeg", source)
+        self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
 
 
 if __name__ == "__main__":

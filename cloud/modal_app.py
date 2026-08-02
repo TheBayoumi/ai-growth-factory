@@ -42,6 +42,7 @@ worker_image = (
     .pip_install(
         "requests==2.32.5",
         "Pillow==11.3.0",
+        "imageio==2.37.0",
         "imageio-ffmpeg==0.6.0",
         "numpy==2.2.6",
         "numba==0.64.0",
@@ -59,15 +60,17 @@ worker_image = (
     )
     .run_commands(
         (
-            "python -c \"import decord, numba, numpy, torch, torchvision; "
+            "python -c \"import decord, imageio, imageio_ffmpeg, numba, numpy, torch, torchvision; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
             "from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor; "
             "from diffusers import AutoencoderKLWan, FluxPipeline, StableDiffusionXLPipeline, "
             "UNet2DConditionModel, WanImageToVideoPipeline; "
+            "assert imageio.__version__ == '2.37.0', imageio.__version__; "
             "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "print('Voice, reviewer, image, and Wan2.2 visual runtime import preflight passed')\""
+            "assert imageio_ffmpeg.get_ffmpeg_exe(); "
+            "print('Voice, reviewer, image, imageio export, and Wan2.2 runtime preflight passed')\""
         ),
         "fc-cache -f -v >/dev/null",
     )
