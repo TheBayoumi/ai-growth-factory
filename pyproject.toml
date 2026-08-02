@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-growth-factory"
-version = "1.3.1"
-description = "Free-first autonomous cloud video pipeline with narration-synced rendering and output verification"
+version = "1.4.0"
+description = "Autonomous source-grounded short-form video pipeline with open visual models, reviewed narration, animated captions, and output verification"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "requests==2.32.5",
@@ -19,7 +19,16 @@ reviewer = [
   "transformers==4.57.3",
   "accelerate==1.12.0",
   "qwen-omni-utils>=0.0.8",
-  "gptqmodel==2.0.0",
+]
+visual = [
+  "diffusers==0.39.0",
+  "transformers==4.57.3",
+  "accelerate==1.12.0",
+  "huggingface-hub[hf_xet]>=0.34,<2",
+  "safetensors>=0.5,<1",
+  "ftfy>=6.3,<7",
+  "sentencepiece>=0.2,<1",
+  "einops>=0.8,<1",
 ]
 cloud = ["modal>=1.0,<2"]
 full = [
@@ -28,7 +37,12 @@ full = [
   "transformers==4.57.3",
   "accelerate==1.12.0",
   "qwen-omni-utils>=0.0.8",
-  "gptqmodel==2.0.0",
+  "diffusers==0.39.0",
+  "huggingface-hub[hf_xet]>=0.34,<2",
+  "safetensors>=0.5,<1",
+  "ftfy>=6.3,<7",
+  "sentencepiece>=0.2,<1",
+  "einops>=0.8,<1",
   "modal>=1.0,<2",
 ]
 
