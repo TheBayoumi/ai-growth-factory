@@ -47,6 +47,50 @@ class TrendRankingTests(unittest.TestCase):
         self.assertIn("mage", alignment.matches[0].overlap_terms)
         self.assertIn("flow", alignment.matches[0].overlap_terms)
 
+    def test_two_substantial_theme_terms_can_form_a_match(self):
+        primary = SourceItem(
+            "Microsoft Research",
+            "EvoLib turns experience into evolving knowledge",
+            "https://microsoft.com/evolib",
+            "A library for continuously evolving reusable knowledge across tasks.",
+            NOW - timedelta(hours=4),
+        )
+        trend = SourceItem(
+            "GitHub Trending",
+            "reverse-skill",
+            "https://github.com/example/reverse-skill",
+            "A self-evolving knowledge base for coding workflows.",
+            NOW,
+            "trend",
+            800.0,
+        )
+        snapshot = TrendSnapshot((trend,), (("github", "ok:1"),), NOW)
+        alignment = align_primary_sources_to_trends([primary], snapshot, now=NOW)
+        self.assertEqual(len(alignment.matches), 1)
+        self.assertIn("evolving", alignment.matches[0].overlap_terms)
+        self.assertIn("knowledge", alignment.matches[0].overlap_terms)
+
+    def test_stopword_only_overlap_is_not_a_trend_match(self):
+        primary = SourceItem(
+            "Official Publisher",
+            "A context for new research tools",
+            "https://official.example/article",
+            "This platform is for the work and the research context.",
+            NOW - timedelta(hours=10),
+        )
+        trend = SourceItem(
+            "Trend Site",
+            "New tools for your work",
+            "https://trend.example/item",
+            "The platform and context are for all users.",
+            NOW,
+            "trend",
+            5000.0,
+        )
+        snapshot = TrendSnapshot((trend,), (("trend", "ok:1"),), NOW)
+        alignment = align_primary_sources_to_trends([primary], snapshot, now=NOW)
+        self.assertEqual(alignment.matches, ())
+
     def test_no_trend_match_falls_back_to_primary_recency(self):
         older = SourceItem(
             "OpenAI",
