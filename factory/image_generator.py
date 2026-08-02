@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageStat
 
@@ -85,16 +85,75 @@ def _validate_keyframe(path: Path, *, width: int, height: int) -> tuple[float, i
     return entropy, image_hash
 
 
+def _materialize_assets(
+    *,
+    plan: VisualPlan,
+    output_dir: Path,
+    backend: str,
+    model: str,
+    steps: int,
+    infer: Callable[[str, str, int], Image.Image],
+) -> tuple[KeyframeAsset, ...]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assets: list[KeyframeAsset] = []
+    hashes: list[int] = []
+    for scene in plan.scenes:
+        try:
+            image = infer(scene.image_prompt, scene.negative_prompt, scene.seed).convert("RGB")
+        except Exception as exc:
+            raise ImageGenerationError(
+                f"{backend} failed for scene {scene.scene_index}: {exc}"
+            ) from exc
+        if image.size != (plan.width, plan.height):
+            image = image.resize((plan.width, plan.height), Image.Resampling.LANCZOS)
+        path = output_dir / f"scene-{scene.scene_index:02d}-keyframe.png"
+        image.save(path, format="PNG", optimize=True)
+        entropy, image_hash = _validate_keyframe(path, width=plan.width, height=plan.height)
+        if any(_hamming(image_hash, previous) < 18 for previous in hashes):
+            raise ImageGenerationError(
+                f"Scene {scene.scene_index} keyframe is too similar to another scene"
+            )
+        hashes.append(image_hash)
+        assets.append(
+            KeyframeAsset(
+                scene_index=scene.scene_index,
+                path=path,
+                model=model,
+                seed=scene.seed,
+                width=plan.width,
+                height=plan.height,
+                sha256=_sha256(path),
+                entropy=round(entropy, 4),
+                prompt=scene.image_prompt,
+                negative_prompt=scene.negative_prompt,
+            )
+        )
+
+    manifest = {
+        "backend": backend,
+        "model": model,
+        "steps": steps,
+        "width": plan.width,
+        "height": plan.height,
+        "captions_or_text_requested": False,
+        "assets": [asset.as_dict() for asset in assets],
+    }
+    (output_dir / "keyframe-manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return tuple(assets)
+
+
 class FluxKeyframeGenerator:
     def __init__(self, plan: VisualPlan) -> None:
         self.plan = plan
         self.model_id = os.getenv(
-            "VISUAL_IMAGE_MODEL",
-            "black-forest-labs/FLUX.1-schnell",
+            "VISUAL_FLUX_MODEL", "black-forest-labs/FLUX.1-schnell"
         ).strip()
-        self.steps = int(os.getenv("VISUAL_IMAGE_STEPS", "4"))
+        self.steps = int(os.getenv("VISUAL_FLUX_STEPS", "4"))
         if not 1 <= self.steps <= 12:
-            raise ImageGenerationError("VISUAL_IMAGE_STEPS must be between 1 and 12")
+            raise ImageGenerationError("VISUAL_FLUX_STEPS must be between 1 and 12")
         self._pipeline: Any = None
 
     def _load(self) -> Any:
@@ -104,11 +163,13 @@ class FluxKeyframeGenerator:
             import torch
             from diffusers import FluxPipeline
         except ImportError as exc:
-            raise ImageGenerationError(
-                "FLUX dependencies are missing. Install the visual worker requirements."
-            ) from exc
-
+            raise ImageGenerationError("FLUX dependencies are missing") from exc
         token = os.getenv("HF_TOKEN") or None
+        if not token:
+            raise ImageGenerationError(
+                "FLUX was selected but HF_TOKEN is missing; use VISUAL_IMAGE_BACKEND=auto "
+                "for the public SDXL-Lightning fallback"
+            )
         try:
             pipeline = FluxPipeline.from_pretrained(
                 self.model_id,
@@ -121,91 +182,134 @@ class FluxKeyframeGenerator:
                 pipeline.to("cuda")
         except Exception as exc:
             raise ImageGenerationError(
-                "Could not load FLUX keyframe model. FLUX.1-schnell requires the "
-                "Hugging Face terms to be accepted and HF_TOKEN to be available to "
-                f"the visual worker: {exc}"
+                "Could not load FLUX. Accept the model terms for the HF_TOKEN account: "
+                f"{exc}"
             ) from exc
         self._pipeline = pipeline
         return pipeline
 
     def generate(self, output_dir: Path) -> tuple[KeyframeAsset, ...]:
-        output_dir.mkdir(parents=True, exist_ok=True)
         pipeline = self._load()
         try:
             import torch
         except ImportError as exc:
             raise ImageGenerationError("PyTorch is missing from the visual worker") from exc
 
-        assets: list[KeyframeAsset] = []
-        hashes: list[int] = []
-        for scene in self.plan.scenes:
-            generator = torch.Generator(device="cpu").manual_seed(scene.seed)
-            try:
-                result = pipeline(
-                    prompt=scene.image_prompt,
-                    width=self.plan.width,
-                    height=self.plan.height,
-                    guidance_scale=0.0,
-                    num_inference_steps=self.steps,
-                    max_sequence_length=256,
-                    generator=generator,
-                )
-                image = result.images[0].convert("RGB")
-            except Exception as exc:
-                raise ImageGenerationError(
-                    f"FLUX failed for scene {scene.scene_index}: {exc}"
-                ) from exc
-            if image.size != (self.plan.width, self.plan.height):
-                image = image.resize(
-                    (self.plan.width, self.plan.height),
-                    Image.Resampling.LANCZOS,
-                )
-            path = output_dir / f"scene-{scene.scene_index:02d}-keyframe.png"
-            image.save(path, format="PNG", optimize=True)
-            entropy, image_hash = _validate_keyframe(
-                path,
+        def infer(prompt: str, _negative: str, seed: int) -> Image.Image:
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+            return pipeline(
+                prompt=prompt,
                 width=self.plan.width,
                 height=self.plan.height,
-            )
-            if any(_hamming(image_hash, previous) < 18 for previous in hashes):
-                raise ImageGenerationError(
-                    f"Scene {scene.scene_index} keyframe is too similar to another scene"
-                )
-            hashes.append(image_hash)
-            assets.append(
-                KeyframeAsset(
-                    scene_index=scene.scene_index,
-                    path=path,
-                    model=self.model_id,
-                    seed=scene.seed,
-                    width=self.plan.width,
-                    height=self.plan.height,
-                    sha256=_sha256(path),
-                    entropy=round(entropy, 4),
-                    prompt=scene.image_prompt,
-                    negative_prompt=scene.negative_prompt,
-                )
-            )
+                guidance_scale=0.0,
+                num_inference_steps=self.steps,
+                max_sequence_length=256,
+                generator=generator,
+            ).images[0]
 
-        manifest = {
-            "backend": "flux",
-            "model": self.model_id,
-            "steps": self.steps,
-            "width": self.plan.width,
-            "height": self.plan.height,
-            "assets": [asset.as_dict() for asset in assets],
-        }
-        (output_dir / "keyframe-manifest.json").write_text(
-            json.dumps(manifest, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        return _materialize_assets(
+            plan=self.plan,
+            output_dir=output_dir,
+            backend="flux",
+            model=self.model_id,
+            steps=self.steps,
+            infer=infer,
         )
-        return tuple(assets)
+
+
+class SDXLLightningKeyframeGenerator:
+    def __init__(self, plan: VisualPlan) -> None:
+        self.plan = plan
+        self.base_model = os.getenv(
+            "VISUAL_SDXL_BASE_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"
+        ).strip()
+        self.repo = os.getenv("VISUAL_SDXL_LIGHTNING_REPO", "ByteDance/SDXL-Lightning").strip()
+        self.checkpoint = os.getenv(
+            "VISUAL_SDXL_LIGHTNING_CHECKPOINT",
+            "sdxl_lightning_4step_unet.safetensors",
+        ).strip()
+        self.steps = int(os.getenv("VISUAL_SDXL_LIGHTNING_STEPS", "4"))
+        if self.steps not in {2, 4, 8}:
+            raise ImageGenerationError("VISUAL_SDXL_LIGHTNING_STEPS must be 2, 4, or 8")
+        self._pipeline: Any = None
+
+    @property
+    def model_id(self) -> str:
+        return f"{self.repo}:{self.checkpoint}+{self.base_model}"
+
+    def _load(self) -> Any:
+        if self._pipeline is not None:
+            return self._pipeline
+        try:
+            import torch
+            from diffusers import EulerDiscreteScheduler, StableDiffusionXLPipeline, UNet2DConditionModel
+            from huggingface_hub import hf_hub_download
+            from safetensors.torch import load_file
+        except ImportError as exc:
+            raise ImageGenerationError("SDXL-Lightning dependencies are missing") from exc
+        try:
+            unet = UNet2DConditionModel.from_config(
+                self.base_model,
+                subfolder="unet",
+            ).to("cuda", torch.float16)
+            weights = hf_hub_download(self.repo, self.checkpoint)
+            unet.load_state_dict(load_file(weights, device="cuda"))
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                self.base_model,
+                unet=unet,
+                torch_dtype=torch.float16,
+                variant="fp16",
+            ).to("cuda")
+            pipeline.scheduler = EulerDiscreteScheduler.from_config(
+                pipeline.scheduler.config,
+                timestep_spacing="trailing",
+            )
+            pipeline.set_progress_bar_config(disable=True)
+        except Exception as exc:
+            raise ImageGenerationError(f"Could not load SDXL-Lightning: {exc}") from exc
+        self._pipeline = pipeline
+        return pipeline
+
+    def generate(self, output_dir: Path) -> tuple[KeyframeAsset, ...]:
+        pipeline = self._load()
+        try:
+            import torch
+        except ImportError as exc:
+            raise ImageGenerationError("PyTorch is missing from the visual worker") from exc
+
+        def infer(prompt: str, negative: str, seed: int) -> Image.Image:
+            generator = torch.Generator(device="cuda").manual_seed(seed)
+            return pipeline(
+                prompt=prompt,
+                negative_prompt=negative,
+                width=self.plan.width,
+                height=self.plan.height,
+                num_inference_steps=self.steps,
+                guidance_scale=0.0,
+                generator=generator,
+            ).images[0]
+
+        return _materialize_assets(
+            plan=self.plan,
+            output_dir=output_dir,
+            backend="sdxl_lightning",
+            model=self.model_id,
+            steps=self.steps,
+            infer=infer,
+        )
+
+
+def selected_image_backend() -> str:
+    backend = os.getenv("VISUAL_IMAGE_BACKEND", "auto").strip().lower()
+    if backend == "auto":
+        return "flux" if os.getenv("HF_TOKEN") else "sdxl_lightning"
+    if backend not in {"flux", "sdxl_lightning"}:
+        raise ImageGenerationError(f"Unsupported production image backend: {backend}")
+    return backend
 
 
 def generate_keyframes(plan: VisualPlan, output_dir: Path) -> tuple[KeyframeAsset, ...]:
-    backend = os.getenv("VISUAL_IMAGE_BACKEND", "flux").strip().lower()
-    if backend != "flux":
-        raise ImageGenerationError(
-            f"Unsupported production image backend: {backend}. Only flux is fail-closed."
-        )
-    return FluxKeyframeGenerator(plan).generate(output_dir)
+    backend = selected_image_backend()
+    if backend == "flux":
+        return FluxKeyframeGenerator(plan).generate(output_dir)
+    return SDXLLightningKeyframeGenerator(plan).generate(output_dir)
