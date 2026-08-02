@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 
-PROMPT_COMPILER_VERSION = "visual-compiler-v4"
+PROMPT_COMPILER_VERSION = "visual-compiler-v5"
 _IMAGE_WORD_BUDGET = 44
 _IMAGE_CHARACTER_BUDGET = 320
 _MOTION_WORD_BUDGET = 48
@@ -13,6 +13,7 @@ _MOTION_WORD_BUDGET = 48
 _SPACE_RE = re.compile(r"\s+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,}")
+_FACTUAL_VISUAL_PREFIX = "factual visual:"
 _UI_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:user\s+interface|interface|dashboard|gui|ui)\b", re.I), "abstract light structure"),
     (re.compile(r"\b(?:computer\s+screen|screen|monitor|display)\b", re.I), "unmarked luminous plane"),
@@ -102,6 +103,8 @@ def _clause_score(clause: str, index: int) -> tuple[float, int]:
     lowered = clause.casefold()
     tokens = set(_TOKEN_RE.findall(lowered))
     score = float(len(tokens - _GENERIC_CLAUSE_TERMS))
+    if lowered.startswith(_FACTUAL_VISUAL_PREFIX):
+        score += 100.0
     if any(marker in lowered for marker in (
         "showing", "depicting", "illustrating", "visualize", "human", "world",
         "multilingual", "satisfaction", "comparison", "response", "network", "pathway",
@@ -118,6 +121,8 @@ def _clause_score(clause: str, index: int) -> tuple[float, int]:
 
 def _focus_clause(clause: str) -> str:
     lowered = clause.casefold()
+    if lowered.startswith(_FACTUAL_VISUAL_PREFIX):
+        return _clean(clause[len(_FACTUAL_VISUAL_PREFIX):])
     for marker in ("showing ", "depicting ", "illustrating ", "displaying "):
         position = lowered.find(marker)
         if position >= 0:
