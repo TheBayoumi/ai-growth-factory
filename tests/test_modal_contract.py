@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MODAL_APP = ROOT / "cloud" / "modal_app.py"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-OLD_PRODUCTION_WORKFLOW = ROOT / ".github" / "workflows" / "modal-production-verification.yml"
+DUPLICATE_PRODUCTION_WORKFLOW = ROOT / ".github" / "workflows" / "modal-production-verification.yml"
 REVIEWER_REQUIREMENTS = ROOT / "requirements-reviewer.txt"
 
 
@@ -20,13 +20,14 @@ class ModalContractTests(unittest.TestCase):
     def test_modal_source_is_valid_python(self):
         ast.parse(self.source, filename=str(MODAL_APP))
 
-    def test_production_uses_a10_and_native_omni_3b(self):
+    def test_production_uses_a10_native_omni_and_visual_offload_capacity(self):
         self.assertIn('gpu="A10"', self.source)
         self.assertNotIn('gpu="T4"', self.source)
         self.assertIn('"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B"', self.source)
         self.assertIn('"QWEN_OMNI_DTYPE": "float16"', self.source)
         self.assertIn('"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"', self.source)
-        self.assertIn("memory=24576", self.source)
+        self.assertIn("memory=65536", self.source)
+        self.assertIn("timeout=85 * 60", self.source)
 
     def test_native_reviewer_has_no_gptq_or_optimum_dependency(self):
         combined = self.source + "\n" + self.reviewer_requirements
@@ -34,16 +35,22 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("optimum", combined.lower())
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
-        self.assertIn("Qwen TTS and native Omni runtime import preflight passed", self.source)
+        self.assertIn(
+            "Voice, reviewer, image, and Wan2.2 visual runtime import preflight passed",
+            self.source,
+        )
 
-    def test_voice_runtime_and_output_contract(self):
+    def test_voice_visual_runtime_and_output_contract(self):
         for token in (
             '"QWEN_TTS_DEVICE": "cuda:0"',
             '"QWEN_TTS_DTYPE": "float32"',
             '"QWEN_TTS_ATTENTION": "sdpa"',
+            '"VISUAL_IMAGE_BACKEND": "auto"',
+            '"WAN22_MODEL_ID": "Wan-AI/Wan2.2-TI2V-5B-Diffusers"',
             '"VIDEO_WIDTH": "1080"',
             '"VIDEO_HEIGHT": "1920"',
             '"VIDEO_FPS": "30"',
+            '"fonts-dejavu-core"',
             '"sox"',
             '"libsox-fmt-all"',
         ):
@@ -64,7 +71,7 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn('python-version: ["3.12", "3.13"]', self.workflow)
         self.assertIn("github.event.pull_request.merged == true", self.workflow)
         self.assertIn("startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')", self.workflow)
-        self.assertFalse(OLD_PRODUCTION_WORKFLOW.exists())
+        self.assertFalse(DUPLICATE_PRODUCTION_WORKFLOW.exists())
 
     def test_production_workflow_uses_persistent_modal_secrets(self):
         self.assertIn('MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}', self.workflow)
@@ -75,6 +82,7 @@ class ModalContractTests(unittest.TestCase):
 
     def test_production_runs_after_verified_checkout(self):
         self.assertIn("Check out CI-verified main", self.workflow)
+        self.assertIn("Autonomous visual pipeline import preflight passed", self.workflow)
         self.assertIn("Deploy A10 production worker", self.workflow)
         self.assertIn("Generate real platform-ready video and capture result", self.workflow)
         test_index = self.workflow.index("Unit and integration tests")
@@ -95,11 +103,19 @@ class ModalContractTests(unittest.TestCase):
             "voice-review-manifest.json",
             "video-qc-report.json",
             "package.json",
+            "visual-plan.json",
+            "keyframe-manifest.json",
+            "scene-media-manifest.json",
+            "animated-captions.ass",
+            "animated-captions.json",
+            "visual-composition-manifest.json",
         ):
             with self.subTest(name=name):
                 self.assertIn(f'"{name}"', self.workflow)
         self.assertIn('video_qc.get("width") != 1080', self.workflow)
         self.assertIn('video_qc.get("height") != 1920', self.workflow)
+        self.assertIn('visuals.get("wan_scene_count") != 3', self.workflow)
+        self.assertIn('captions_baked_into_generated_media', self.workflow)
 
     def test_failed_generation_still_uploads_diagnostics(self):
         guard = "steps.production.outcome == 'success' || steps.production.outcome == 'failure'"
