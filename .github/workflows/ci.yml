@@ -85,6 +85,7 @@ jobs:
           python -m pip install -e . "modal==1.5.3"
           python -m compileall -q factory api cloud
           python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
+          python -c "from factory.trend_sources import fetch_trend_snapshot; from factory.trend_ranking import align_primary_sources_to_trends; print('Live trend discovery import preflight passed')"
           python -c "from factory.visual_prompt import construct_visual_plan; from factory.caption_renderer import write_animated_caption_track; from factory.visual_pipeline import render_visual_plan; print('Autonomous visual pipeline import preflight passed')"
           python scripts/repository_preflight.py
 
@@ -197,6 +198,7 @@ jobs:
               "voice-review-manifest.json",
               "video-qc-report.json",
               "package.json",
+              "trend-snapshot.json",
               "visual-plan.json",
               "keyframe-manifest.json",
               "scene-media-manifest.json",
@@ -207,6 +209,17 @@ jobs:
           missing = [name for name in required if not (root / name).exists()]
           if missing:
               raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
+          trend_snapshot = json.loads((root / "trend-snapshot.json").read_text(encoding="utf-8"))
+          trend_items = trend_snapshot.get("items") or []
+          provider_status = trend_snapshot.get("provider_status") or {}
+          provider_successes = sum(str(value).startswith("ok:") for value in provider_status.values())
+          trend_matches = ((trend_snapshot.get("alignment") or {}).get("matches") or [])
+          if len(trend_items) < 3:
+              raise SystemExit(f"Expected at least three current AI trend signals: {trend_snapshot}")
+          if provider_successes < 2:
+              raise SystemExit(f"Expected at least two successful trend providers: {provider_status}")
+          if not trend_matches:
+              raise SystemExit("No live trend signal matched an official primary-source article")
           keyframes = sorted((root / "visual-keyframes").glob("scene-*-keyframe.png"))
           if len(keyframes) != 6:
               raise SystemExit(f"Expected six generated keyframes, received {len(keyframes)}")
