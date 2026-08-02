@@ -44,7 +44,8 @@ class TrendRankingTests(unittest.TestCase):
         self.assertTrue(all(item.is_primary for item in alignment.ranked_sources))
         self.assertNotIn(trend.url, [item.url for item in alignment.ranked_sources])
         self.assertEqual(alignment.matches[0].trend_url, trend.url)
-        self.assertIn("mage-flow", alignment.matches[0].overlap_terms)
+        self.assertIn("mage", alignment.matches[0].overlap_terms)
+        self.assertIn("flow", alignment.matches[0].overlap_terms)
 
     def test_no_trend_match_falls_back_to_primary_recency(self):
         older = SourceItem(
