@@ -12,29 +12,75 @@ from .trend_sources import TrendSnapshot
 
 _TOKEN_RE = re.compile(r"[a-z0-9]{2,40}")
 _STOP = {
+    "2026",
     "about",
     "after",
     "against",
-    "agent",
-    "agents",
+    "all",
+    "also",
+    "and",
+    "are",
     "artificial",
+    "been",
+    "being",
+    "between",
+    "both",
+    "can",
+    "context",
+    "could",
+    "data",
+    "discovery",
+    "for",
     "from",
+    "had",
+    "has",
+    "have",
+    "how",
     "into",
     "intelligence",
     "latest",
     "machine",
+    "more",
+    "most",
     "model",
     "models",
+    "new",
     "news",
+    "not",
+    "open",
+    "platform",
+    "real",
     "release",
+    "research",
+    "services",
+    "should",
+    "system",
+    "systems",
     "technology",
     "that",
+    "the",
     "their",
+    "these",
     "this",
     "today",
+    "tool",
+    "tools",
     "using",
+    "was",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "will",
     "with",
+    "work",
+    "world",
+    "would",
+    "you",
+    "your",
 }
+_MIN_MATCH_SCORE = 0.12
 
 
 @dataclass(frozen=True)
@@ -78,16 +124,29 @@ def _recency_score(item: SourceItem, *, now: datetime) -> float:
 
 
 def _match_score(primary: SourceItem, trend: SourceItem) -> tuple[float, tuple[str, ...]]:
-    primary_tokens = _tokens(primary.title, primary.summary)
-    trend_tokens = _tokens(trend.title, trend.summary)
-    overlap = tuple(sorted(primary_tokens & trend_tokens))
+    primary_title = _tokens(primary.title)
+    trend_title = _tokens(trend.title)
+    primary_tokens = primary_title | _tokens(primary.summary)
+    trend_tokens = trend_title | _tokens(trend.summary)
+    overlap_set = primary_tokens & trend_tokens
+    title_overlap = primary_title & trend_title
+    overlap = tuple(sorted(overlap_set))
     if not overlap:
         return 0.0, ()
+
+    strong_title_overlap = {token for token in title_overlap if len(token) >= 5}
+    strong_content_overlap = {token for token in overlap_set if len(token) >= 5}
+    if not strong_title_overlap and len(strong_content_overlap) < 2:
+        return 0.0, ()
+
     denominator = math.sqrt(max(1, len(primary_tokens)) * max(1, len(trend_tokens)))
-    lexical = len(overlap) / denominator
+    lexical = len(overlap_set) / denominator
     popularity = 1.0 + math.log1p(max(0.0, trend.trend_score)) / 6.0
-    title_bonus = 1.35 if _tokens(primary.title) & _tokens(trend.title) else 1.0
-    return lexical * popularity * title_bonus, overlap
+    title_bonus = 1.5 if strong_title_overlap else 1.0
+    score = lexical * popularity * title_bonus
+    if score < _MIN_MATCH_SCORE:
+        return 0.0, ()
+    return score, overlap
 
 
 def align_primary_sources_to_trends(
@@ -97,11 +156,11 @@ def align_primary_sources_to_trends(
     limit: int = 30,
     now: datetime | None = None,
 ) -> TrendAlignment:
-    """Rank factual primary sources using non-citable current trend signals.
+    """Rank factual primary sources using substantive non-citable trend signals.
 
     Trend pages influence which official stories are considered first. They are never
-    returned as evidence candidates, so generated source URLs remain restricted to the
-    primary publishers already enforced by the package validator.
+    returned as evidence candidates. A match requires either a meaningful title entity
+    or at least two substantial content terms; stopword-only overlap is rejected.
     """
     if limit < 1:
         raise ValueError("limit must be at least 1")
