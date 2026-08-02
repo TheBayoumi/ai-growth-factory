@@ -20,10 +20,16 @@ class SourceItem:
     url: str
     summary: str
     published_at: datetime
+    source_kind: str = "primary"
+    trend_score: float = 0.0
 
     @property
     def fingerprint(self) -> str:
         return hashlib.sha256(f"{self.publisher}|{self.title}|{self.url}".encode()).hexdigest()[:16]
+
+    @property
+    def is_primary(self) -> bool:
+        return self.source_kind == "primary"
 
 
 @dataclass(frozen=True)
@@ -128,7 +134,7 @@ def fetch_recent(*, max_age_hours: int, timeout_seconds: float = 10.0) -> list[S
 
 
 def publishers(items: Iterable[SourceItem]) -> set[str]:
-    return {item.publisher for item in items}
+    return {item.publisher for item in items if item.is_primary}
 
 
 def fetch_diverse_recent(
@@ -139,11 +145,11 @@ def fetch_diverse_recent(
     timeout_seconds: float = 10.0,
     fetcher: FetchRecent = fetch_recent,
 ) -> SourceSelection:
-    """Select fresh sources, expanding once when the primary window lacks diversity.
+    """Select fresh primary sources, expanding once when diversity is insufficient.
 
     The fallback is bounded to seven days and never weakens the independent-publisher
-    requirement. Callers remain responsible for failing closed when the returned
-    selection still contains fewer than ``min_publishers`` publishers.
+    requirement. Discovery-only trend signals are deliberately excluded from publisher
+    diversity and are collected separately by ``factory.trend_sources``.
     """
     if not 1 <= max_age_hours <= 168:
         raise ValueError("max_age_hours must be between 1 and 168")
@@ -155,7 +161,11 @@ def fetch_diverse_recent(
     best: SourceSelection | None = None
 
     for window in windows:
-        items = tuple(fetcher(max_age_hours=window, timeout_seconds=timeout_seconds))
+        items = tuple(
+            item
+            for item in fetcher(max_age_hours=window, timeout_seconds=timeout_seconds)
+            if item.is_primary
+        )
         selection = SourceSelection(
             items=items,
             publishers=frozenset(publishers(items)),
@@ -169,6 +179,6 @@ def fetch_diverse_recent(
         if selection.publisher_count >= min_publishers:
             return selection
 
-    if best is None:  # Defensive: windows always contains at least the primary window.
+    if best is None:
         raise RuntimeError("Source selection did not execute")
     return best
