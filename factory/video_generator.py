@@ -5,12 +5,13 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from PIL import Image
 
 from .image_generator import KeyframeAsset
 from .visual_prompt import SceneVisualPrompt, VisualPlan
+from .visual_prompt_compiler import compile_motion_prompt
 
 
 class VideoGenerationError(RuntimeError):
@@ -27,6 +28,10 @@ class SceneMediaAsset:
     seed: int
     prompt: str
     sha256: str
+    director_prompt: str = ""
+    prompt_word_count: int = 0
+    prompt_word_budget: int = 0
+    prompt_compiler_version: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -48,6 +53,40 @@ def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, Keyfra
     if len(result) != len(keyframes):
         raise VideoGenerationError("Duplicate keyframe scene index")
     return result
+
+
+def _export_frames(frames: Iterable[Any], output: Path, *, fps: int) -> Path:
+    """Export Wan frames through the explicitly installed imageio FFmpeg backend."""
+    try:
+        import imageio.v2 as imageio
+        import numpy as np
+    except ImportError as exc:
+        raise VideoGenerationError(
+            "Wan frame export requires imageio, imageio-ffmpeg, and numpy"
+        ) from exc
+    arrays = []
+    for frame in frames:
+        if isinstance(frame, Image.Image):
+            converted = frame.convert("RGB")
+        else:
+            converted = Image.fromarray(np.asarray(frame)).convert("RGB")
+        arrays.append(np.asarray(converted, dtype=np.uint8))
+    if not arrays:
+        raise VideoGenerationError("Wan returned no frames to export")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        imageio.mimwrite(
+            str(output),
+            arrays,
+            fps=fps,
+            codec="libx264",
+            pixelformat="yuv420p",
+            quality=8,
+            macro_block_size=None,
+        )
+    except Exception as exc:
+        raise VideoGenerationError(f"imageio could not export Wan frames: {exc}") from exc
+    return output
 
 
 class Wan22DiffusersAnimator:
@@ -110,13 +149,12 @@ class Wan22DiffusersAnimator:
         scene: SceneVisualPrompt,
         keyframe: KeyframeAsset,
         output: Path,
-    ) -> Path:
+    ) -> tuple[Path, str, int, int, str]:
         pipeline = self._load()
         try:
             import torch
-            from diffusers.utils import export_to_video
         except ImportError as exc:
-            raise VideoGenerationError("Wan2.2 export dependencies are missing") from exc
+            raise VideoGenerationError("PyTorch is missing from the Wan worker") from exc
 
         with Image.open(keyframe.path) as source:
             image = source.convert("RGB").resize(
@@ -124,16 +162,15 @@ class Wan22DiffusersAnimator:
                 Image.Resampling.LANCZOS,
             )
         generator = torch.Generator(device="cpu").manual_seed(scene.seed)
-        prompt = (
-            scene.motion_prompt
-            + " Maintain this source-grounded visual design: "
-            + scene.image_prompt
-        )
+        executable = compile_motion_prompt(scene.motion_prompt)
         try:
             frames = pipeline(
                 image=image,
-                prompt=prompt,
-                negative_prompt=scene.negative_prompt,
+                prompt=executable.compiled_motion_prompt,
+                negative_prompt=(
+                    "text, letters, numbers, symbols, captions, logos, watermark, screens, "
+                    "new objects, cuts, camera shake, zoom, flicker, morphing, warped anatomy"
+                ),
                 height=self.plan.height,
                 width=self.plan.width,
                 num_frames=self.frame_num,
@@ -141,9 +178,10 @@ class Wan22DiffusersAnimator:
                 guidance_scale=self.guidance_scale,
                 generator=generator,
             ).frames[0]
-            output.parent.mkdir(parents=True, exist_ok=True)
-            export_to_video(frames, str(output), fps=self.plan.fps)
+            _export_frames(frames, output, fps=self.plan.fps)
         except Exception as exc:
+            if isinstance(exc, VideoGenerationError):
+                raise
             raise VideoGenerationError(
                 f"Wan2.2 failed for scene {scene.scene_index}: {exc}"
             ) from exc
@@ -151,7 +189,13 @@ class Wan22DiffusersAnimator:
             raise VideoGenerationError(
                 f"Wan2.2 produced no usable clip for scene {scene.scene_index}"
             )
-        return output
+        return (
+            output,
+            executable.compiled_motion_prompt,
+            executable.word_count,
+            executable.word_budget,
+            executable.compiler_version,
+        )
 
 
 def generate_scene_media(
@@ -171,15 +215,26 @@ def generate_scene_media(
             raise VideoGenerationError(f"Missing keyframe for scene {scene.scene_index}")
         if scene.generation_mode == "wan_i2v":
             path = output_dir / f"scene-{scene.scene_index:02d}-wan.mp4"
-            animator.animate(scene, keyframe, path)
+            (
+                path,
+                compiled_prompt,
+                prompt_word_count,
+                prompt_word_budget,
+                compiler_version,
+            ) = animator.animate(scene, keyframe, path)
             media_type = "video"
             model = animator.model_id
-            prompt = scene.motion_prompt
+            prompt = compiled_prompt
+            director_prompt = scene.motion_prompt
         elif scene.generation_mode == "image":
             path = keyframe.path
             media_type = "image"
             model = keyframe.model
-            prompt = scene.image_prompt
+            prompt = keyframe.prompt
+            director_prompt = keyframe.director_prompt
+            prompt_word_count = keyframe.prompt_word_count
+            prompt_word_budget = keyframe.prompt_word_budget
+            compiler_version = keyframe.prompt_compiler_version
         else:
             raise VideoGenerationError(
                 f"Unsupported generation mode: {scene.generation_mode}"
@@ -194,6 +249,10 @@ def generate_scene_media(
                 seed=scene.seed,
                 prompt=prompt,
                 sha256=_sha256(path),
+                director_prompt=director_prompt,
+                prompt_word_count=prompt_word_count,
+                prompt_word_budget=prompt_word_budget,
+                prompt_compiler_version=compiler_version,
             )
         )
 
@@ -201,7 +260,7 @@ def generate_scene_media(
         raise VideoGenerationError("Production visual plan must contain exactly three Wan clips")
 
     manifest = {
-        "video_backend": "wan22_ti2v_diffusers",
+        "video_backend": "wan22_ti2v_diffusers_imageio_export",
         "video_model": animator.model_id,
         "frame_num": animator.frame_num,
         "sample_steps": animator.steps,
@@ -209,6 +268,7 @@ def generate_scene_media(
         "model_cpu_offload": True,
         "vae_tiling": True,
         "vae_slicing": True,
+        "image_prompt_reinjected_into_motion_prompt": False,
         "assets": [asset.as_dict() for asset in assets],
     }
     (output_dir / "scene-media-manifest.json").write_text(
