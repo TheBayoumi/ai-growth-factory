@@ -67,6 +67,16 @@ def _copy_keyframes(workdir: Path, destination: Path) -> None:
         _copy(path, target)
 
 
+def _copy_scene_media(workdir: Path, destination: Path) -> None:
+    source = workdir / "visual-assets" / "scene-media"
+    if not source.is_dir():
+        return
+    target = destination / "visual-scene-media"
+    target.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.glob("*.mp4")):
+        _copy(path, target)
+
+
 def _copy_visual_audit(workdir: Path, destination: Path) -> None:
     visual_root = workdir / "visual-assets"
     candidates = (
@@ -82,6 +92,67 @@ def _copy_visual_audit(workdir: Path, destination: Path) -> None:
     for path in candidates:
         _copy_if_exists(path, destination, path.name)
     _copy_keyframes(workdir, destination)
+    _copy_scene_media(workdir, destination)
+
+
+def _write_package(
+    destination: Path,
+    package: Any,
+    *,
+    source_publishers: set[str],
+    source_max_age_hours: int,
+    trend_snapshot: Any,
+    trend_alignment: Any,
+) -> Path:
+    package_payload = asdict(package)
+    package_payload["strategy"] = asdict(CANARY_STRATEGY)
+    package_payload["source_feed_publishers"] = sorted(source_publishers)
+    package_payload["source_max_age_hours"] = source_max_age_hours
+    package_payload["trend_signal_count"] = len(trend_snapshot.items)
+    package_payload["trend_provider_status"] = dict(trend_snapshot.provider_status)
+    package_payload["trend_match_count"] = len(trend_alignment.matches)
+    output = destination / "package.json"
+    output.write_text(
+        json.dumps(package_payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return output
+
+
+def _persist_generated_bundle(
+    *,
+    destination: Path,
+    workdir: Path,
+    package: Any | None,
+    voice: Any | None,
+    visual: Any | None,
+    source_publishers: set[str],
+    source_max_age_hours: int | None,
+    trend_snapshot: Any | None,
+    trend_alignment: Any | None,
+) -> None:
+    if visual is not None:
+        _copy_if_exists(visual.video_path, destination, "video.mp4")
+        _copy_if_exists(visual.thumbnail_path, destination, "thumbnail.png")
+        _copy_if_exists(visual.caption_path, destination, "animated-captions.ass")
+    if voice is not None:
+        _copy_if_exists(voice.audio_path, destination, "narration.wav")
+        _copy_if_exists(voice.manifest_path, destination, "voice-review-manifest.json")
+    if (
+        package is not None
+        and source_max_age_hours is not None
+        and trend_snapshot is not None
+        and trend_alignment is not None
+    ):
+        _write_package(
+            destination,
+            package,
+            source_publishers=source_publishers,
+            source_max_age_hours=source_max_age_hours,
+            trend_snapshot=trend_snapshot,
+            trend_alignment=trend_alignment,
+        )
+    _copy_visual_audit(workdir, destination)
 
 
 def run_production_canary(settings: Settings, output_root: Path) -> dict[str, Any]:
@@ -94,6 +165,14 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
     settings.work_root.mkdir(parents=True, exist_ok=True)
     research_dir = Path(tempfile.mkdtemp(prefix="canary-research-", dir=settings.work_root))
     workdir = Path(tempfile.mkdtemp(prefix="canary-run-", dir=settings.work_root))
+
+    package = None
+    voice = None
+    visual = None
+    selection = None
+    trend_snapshot = None
+    trend_alignment = None
+    source_publishers: set[str] = set()
 
     try:
         selection = fetch_diverse_recent(
@@ -150,6 +229,19 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             output_height=settings.height,
             output_fps=settings.fps,
         )
+
+        _persist_generated_bundle(
+            destination=destination,
+            workdir=workdir,
+            package=package,
+            voice=voice,
+            visual=visual,
+            source_publishers=source_publishers,
+            source_max_age_hours=selection.max_age_hours,
+            trend_snapshot=trend_snapshot,
+            trend_alignment=trend_alignment,
+        )
+
         scene_durations = _scene_durations(voice.segments, voice.metrics.duration_seconds)
         qc_path = workdir / "video-qc-report.json"
         video_qc = verify_video_output(
@@ -162,28 +254,11 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             require_production_voice=True,
             report_path=qc_path,
         )
-
-        _copy(visual.video_path, destination, "video.mp4")
-        _copy(visual.thumbnail_path, destination, "thumbnail.png")
-        _copy(voice.audio_path, destination, "narration.wav")
-        _copy(voice.manifest_path, destination, "voice-review-manifest.json")
         _copy(qc_path, destination, "video-qc-report.json")
-        _copy_visual_audit(workdir, destination)
+
         llama_log = research_dir / "llama-server.log"
         if llama_log.exists():
             _copy(llama_log, destination)
-
-        package_payload = asdict(package)
-        package_payload["strategy"] = asdict(CANARY_STRATEGY)
-        package_payload["source_feed_publishers"] = sorted(source_publishers)
-        package_payload["source_max_age_hours"] = selection.max_age_hours
-        package_payload["trend_signal_count"] = len(trend_snapshot.items)
-        package_payload["trend_provider_status"] = dict(trend_snapshot.provider_status)
-        package_payload["trend_match_count"] = len(trend_alignment.matches)
-        (destination / "package.json").write_text(
-            json.dumps(package_payload, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
 
         completed_at = datetime.now(timezone.utc)
         result: dict[str, Any] = {
@@ -244,16 +319,23 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             json.dumps(failure, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        _persist_generated_bundle(
+            destination=destination,
+            workdir=workdir,
+            package=package,
+            voice=voice,
+            visual=visual,
+            source_publishers=source_publishers,
+            source_max_age_hours=selection.max_age_hours if selection is not None else None,
+            trend_snapshot=trend_snapshot,
+            trend_alignment=trend_alignment,
+        )
         llama_log = research_dir / "llama-server.log"
         if llama_log.exists():
             _copy(llama_log, destination)
-        voice_manifest = workdir / "voice-review-manifest.json"
-        if voice_manifest.exists():
-            _copy(voice_manifest, destination)
         qc_report = workdir / "video-qc-report.json"
         if qc_report.exists():
             _copy(qc_report, destination)
-        _copy_visual_audit(workdir, destination)
         return failure
     finally:
         shutil.rmtree(research_dir, ignore_errors=True)
