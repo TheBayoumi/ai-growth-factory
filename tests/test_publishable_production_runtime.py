@@ -40,10 +40,14 @@ class PublishableProductionRuntimeTests(unittest.TestCase):
         self.assertIn("130-155 words", source)
         self.assertIn("ONE coherent, current story", source)
 
-    def test_pacing_allows_pitch_preserving_short_form_correction(self):
-        source = (ROOT / "factory" / "production_pacing.py").read_text(encoding="utf-8")
-        self.assertIn("_MAX_PRODUCTION_TEMPO = 1.35", source)
-        self.assertIn("voice_pipeline.tempo_correction_factor", source)
+    def test_pacing_allows_bounded_pitch_preserving_segment_correction(self):
+        pacing = (ROOT / "factory" / "production_pacing.py").read_text(encoding="utf-8")
+        pipeline = (ROOT / "factory" / "voice_pipeline.py").read_text(encoding="utf-8")
+        self.assertIn("_MAX_PRODUCTION_TEMPO = 1.45", pacing)
+        self.assertIn("voice_pipeline.tempo_correction_factor", pacing)
+        self.assertIn("_pace_correct_segment_assets", pipeline)
+        self.assertIn("deterministic_segment_tempo_correction", pipeline)
+        self.assertIn("already-compliant segments", pacing)
 
 
 if __name__ == "__main__":
