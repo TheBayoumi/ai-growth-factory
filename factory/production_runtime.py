@@ -9,8 +9,8 @@ def install_production_runtime() -> None:
 
     Scene attribution is handled by factory.source_attributed_llm at the package
     validation boundary. Near-complete narration length is stabilized before the
-    production editorial wrapper is installed. Visual model routing is deterministic
-    after the director has supplied semantic roles and prompts.
+    editorial wrapper. Unsupported publisher relationships are then grounded in
+    explicit independent-source language before the same editorial validator runs.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -19,12 +19,14 @@ def install_production_runtime() -> None:
     from .production_content import install_production_content_gate
     from .production_narration_length import install_production_narration_length_repair
     from .production_pacing import install_production_pacing
+    from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
     from .production_visual_routing import install_production_visual_routing
     from .production_voice_repair import install_production_voice_repair
 
     install_production_narration_length_repair()
     install_production_content_gate()
+    install_production_relationship_grounding()
     install_production_pacing()
     install_production_voice_repair()
     install_production_visual_routing()
