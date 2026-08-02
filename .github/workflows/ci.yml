@@ -35,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . coverage
       - name: Compile
-        run: python -m compileall -q factory api tests cloud
+        run: python -m compileall -q factory api tests cloud scripts
       - name: Unit and integration tests
         run: coverage run --branch -m unittest discover -s tests -v
       - name: Coverage report
@@ -83,11 +83,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . "modal==1.5.3"
-          python -m compileall -q factory api cloud
+          python -m compileall -q factory api cloud scripts
           python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
           python -c "from factory.trend_sources import fetch_trend_snapshot; from factory.trend_ranking import align_primary_sources_to_trends; print('Live trend discovery import preflight passed')"
           python -c "from factory.visual_prompt import construct_visual_plan; from factory.caption_renderer import write_animated_caption_track; from factory.visual_pipeline import render_visual_plan; print('Autonomous visual pipeline import preflight passed')"
           python scripts/repository_preflight.py
+          python scripts/trend_preflight.py
 
       - name: Verify Modal credential pair
         run: modal token info
@@ -161,6 +162,7 @@ jobs:
             production-video/
             modal-production-result.txt
             canary-id.txt
+            trend-preflight.json
           if-no-files-found: warn
           retention-days: 30
 
