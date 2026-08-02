@@ -19,11 +19,11 @@ def install_production_visual_semantics() -> None:
 
     from . import video_generator, visual_prompt
 
-    original_construct = visual_prompt.construct_visual_plan
+    original_validate = visual_prompt._validate_and_normalize
     original_animate = video_generator.Wan22DiffusersAnimator.animate
 
-    def construct(*args: Any, **kwargs: Any) -> Any:
-        plan = original_construct(*args, **kwargs)
+    def validate(raw: dict[str, Any], **kwargs: Any) -> Any:
+        plan = original_validate(raw, **kwargs)
         validate_compiled_prompt_diversity(plan.scenes)
         return plan
 
@@ -43,6 +43,6 @@ def install_production_visual_semantics() -> None:
         finally:
             video_generator.compile_motion_prompt = original_compiler
 
-    visual_prompt.construct_visual_plan = construct
+    visual_prompt._validate_and_normalize = validate
     video_generator.Wan22DiffusersAnimator.animate = animate
     _INSTALLED = True
