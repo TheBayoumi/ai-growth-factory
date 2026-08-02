@@ -13,9 +13,10 @@ from .config import Settings
 from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
 from .policy import Strategy
-from .render import render_video
 from .source_attributed_llm import generate_package
 from .video_qc import verify_video_output
+from .visual_pipeline import release_accelerator_memory, render_visual_plan
+from .visual_prompt import construct_visual_plan
 from .voice_pipeline import build_reviewed_narration
 from .voice_policy import contract_for_strategy
 
@@ -23,7 +24,7 @@ from .voice_policy import contract_for_strategy
 CANARY_STRATEGY = Strategy(
     hook="practical",
     pacing="balanced",
-    visual="dashboard",
+    visual="cinematic_editorial",
     duration="55-62",
     cta="subscribe",
 )
@@ -49,13 +50,40 @@ def _copy(path: Path, destination: Path, name: str | None = None) -> Path:
     return output
 
 
-def run_production_canary(settings: Settings, output_root: Path) -> dict[str, Any]:
-    """Execute the real generation stack without publishing to YouTube.
+def _copy_if_exists(path: Path, destination: Path, name: str | None = None) -> None:
+    if path.is_file():
+        _copy(path, destination, name)
 
-    The canary uses current primary-source research, the managed Qwen script model,
-    Qwen3-TTS, the configured perceptual reviewer, the production renderer, and the
-    same fail-closed video verifier used by publication.
-    """
+
+def _copy_keyframes(workdir: Path, destination: Path) -> None:
+    source = workdir / "visual-assets" / "keyframes"
+    if not source.is_dir():
+        return
+    target = destination / "visual-keyframes"
+    target.mkdir(parents=True, exist_ok=True)
+    for path in sorted(source.glob("*.png")):
+        _copy(path, target)
+
+
+def _copy_visual_audit(workdir: Path, destination: Path) -> None:
+    visual_root = workdir / "visual-assets"
+    candidates = (
+        visual_root / "visual-plan.json",
+        visual_root / "visual-pipeline-manifest.json",
+        visual_root / "keyframes" / "keyframe-manifest.json",
+        visual_root / "scene-media" / "scene-media-manifest.json",
+        visual_root / "render" / "animated-captions.ass",
+        visual_root / "render" / "animated-captions.json",
+        visual_root / "render" / "visual-composition-manifest.json",
+        visual_root / "render" / "visual-compositor.log",
+    )
+    for path in candidates:
+        _copy_if_exists(path, destination, path.name)
+    _copy_keyframes(workdir, destination)
+
+
+def run_production_canary(settings: Settings, output_root: Path) -> dict[str, Any]:
+    """Execute the real source, voice, open-model visual, caption, and QC stack."""
     started_at = datetime.now(timezone.utc)
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     canary_id = f"{stamp}-{hashlib.sha256(stamp.encode()).hexdigest()[:8]}"
@@ -76,12 +104,17 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
         if selection.publisher_count < settings.min_primary_sources:
             raise RuntimeError(
                 f"Canary found only {selection.publisher_count} primary publishers "
-                f"within {selection.max_age_hours} hours; "
-                f"required {settings.min_primary_sources}"
+                f"within {selection.max_age_hours} hours; required {settings.min_primary_sources}"
             )
 
         with managed_llama_server(settings, research_dir):
             package = generate_package(settings, sources, CANARY_STRATEGY)
+            visual_plan = construct_visual_plan(
+                settings,
+                package,
+                sources,
+                CANARY_STRATEGY,
+            )
 
         if len(set(package.source_publishers)) < settings.min_primary_sources:
             raise RuntimeError("Canary package did not retain enough primary publishers")
@@ -93,19 +126,23 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             workdir,
             voice_contract=voice_contract,
         )
-        video_path, thumbnail_path = render_video(
-            settings,
-            package,
-            CANARY_STRATEGY,
-            workdir,
+        release_accelerator_memory()
+        visual = render_visual_plan(
+            plan=visual_plan,
+            package=package,
             segments=voice.segments,
+            audio_path=voice.audio_path,
+            workdir=workdir,
+            output_width=settings.width,
+            output_height=settings.height,
+            output_fps=settings.fps,
         )
         scene_durations = _scene_durations(voice.segments, voice.metrics.duration_seconds)
         qc_path = workdir / "video-qc-report.json"
         video_qc = verify_video_output(
             settings,
-            video_path,
-            thumbnail_path,
+            visual.video_path,
+            visual.thumbnail_path,
             expected_duration=voice.metrics.duration_seconds,
             scene_durations=scene_durations,
             voice_manifest_path=voice.manifest_path,
@@ -113,11 +150,12 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             report_path=qc_path,
         )
 
-        _copy(video_path, destination, "video.mp4")
-        _copy(thumbnail_path, destination, "thumbnail.png")
+        _copy(visual.video_path, destination, "video.mp4")
+        _copy(visual.thumbnail_path, destination, "thumbnail.png")
         _copy(voice.audio_path, destination, "narration.wav")
         _copy(voice.manifest_path, destination, "voice-review-manifest.json")
         _copy(qc_path, destination, "video-qc-report.json")
+        _copy_visual_audit(workdir, destination)
         llama_log = research_dir / "llama-server.log"
         if llama_log.exists():
             _copy(llama_log, destination)
@@ -152,6 +190,17 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
                 "metrics": voice.metrics.as_dict(),
                 "contract": voice.voice_contract.as_dict(),
             },
+            "visuals": {
+                "prompt_version": visual_plan.prompt_version,
+                "image_model": visual_plan.image_model,
+                "video_model": visual_plan.video_model,
+                "wan_scene_count": sum(
+                    scene.generation_mode == "wan_i2v" for scene in visual_plan.scenes
+                ),
+                "caption_rendering": "separate_animated_ass_layer",
+                "captions_baked_into_generated_media": False,
+                "director_input_sha256": visual_plan.director_input_sha256,
+            },
             "video_qc": video_qc.as_dict(),
         }
         (destination / "canary-result.json").write_text(
@@ -182,6 +231,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
         qc_report = workdir / "video-qc-report.json"
         if qc_report.exists():
             _copy(qc_report, destination)
+        _copy_visual_audit(workdir, destination)
         return failure
     finally:
         shutil.rmtree(research_dir, ignore_errors=True)
