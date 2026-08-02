@@ -4,9 +4,10 @@ import re
 from dataclasses import dataclass
 
 
-PROMPT_COMPILER_VERSION = "visual-compiler-v2"
-_IMAGE_WORD_BUDGET = 64
-_MOTION_WORD_BUDGET = 58
+PROMPT_COMPILER_VERSION = "visual-compiler-v3"
+_IMAGE_WORD_BUDGET = 42
+_IMAGE_CHARACTER_BUDGET = 300
+_MOTION_WORD_BUDGET = 48
 
 _SPACE_RE = re.compile(r"\s+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -84,34 +85,47 @@ def _truncate_words(value: str, maximum: int) -> str:
     return " ".join(words[:maximum]).rstrip(" ,.;:")
 
 
+def _truncate_content(value: str, *, maximum_words: int, maximum_characters: int) -> str:
+    shortened = _truncate_words(value, maximum_words)
+    if len(shortened) <= maximum_characters:
+        return shortened
+    boundary = shortened.rfind(" ", 0, maximum_characters + 1)
+    if boundary < 1:
+        boundary = maximum_characters
+    return shortened[:boundary].rstrip(" ,.;:")
+
+
 def compile_image_prompt(
     director_prompt: str,
     director_negative_prompt: str = "",
     *,
     word_budget: int = _IMAGE_WORD_BUDGET,
 ) -> CompiledVisualPrompt:
-    """Compile a rich director prompt into a CLIP-safe, text-resistant image prompt.
+    """Compile rich direction into a conservative SDXL CLIP-safe prompt.
 
-    The director output remains untouched in the audit artifact. The executable prompt
-    places the critical composition and text-free constraints before scene content and
-    fits below SDXL's practical CLIP token ceiling.
+    Word count alone did not protect v8: 64 words expanded to 93 CLIP tokens and
+    truncated the caption-safe suffix. This compiler uses a shorter fixed contract,
+    a 42-word ceiling, and a 300-character ceiling while preserving the complete
+    director prompt separately for audit.
     """
-    if word_budget < 40:
-        raise ValueError("image prompt word_budget must be at least 40")
-    prefix = (
-        "Text-free cinematic editorial image, without screens, signage, symbols, logos, "
-        "or interface elements."
-    )
+    if word_budget < 36:
+        raise ValueError("image prompt word_budget must be at least 36")
+    prefix = "Text-free cinematic editorial image. No screens, signs, symbols, logos, or interfaces."
     suffix = (
-        "Subject framed in the upper two-thirds. Lower third is simple dark empty negative "
-        "space for later captions. Vertical 9:16, stable geometry, realistic lighting."
+        "Subject high in frame. Dark empty lower third reserved for captions. "
+        "Portrait framing, stable geometry, realistic light."
     )
-    reserved = len(prefix.split()) + len(suffix.split())
-    content_budget = max(8, word_budget - reserved)
+    fixed_words = len(prefix.split()) + len(suffix.split())
+    fixed_characters = len(prefix) + len(suffix) + 3
     content = _core_sentences(_sanitize_visual_language(director_prompt))
-    content = _truncate_words(content, content_budget)
+    content = _truncate_content(
+        content,
+        maximum_words=max(6, word_budget - fixed_words),
+        maximum_characters=max(50, _IMAGE_CHARACTER_BUDGET - fixed_characters),
+    )
     compiled = _clean(f"{prefix} {content}. {suffix}")
-    compiled = _truncate_words(compiled, word_budget)
+    if len(compiled.split()) > word_budget or len(compiled) > _IMAGE_CHARACTER_BUDGET:
+        raise ValueError("Compiled image prompt exceeded the conservative CLIP budget")
 
     negative_parts = (
         "text letters numbers symbols captions subtitles logos watermark signage",
@@ -144,15 +158,12 @@ def compile_motion_prompt(
     word_budget: int = _MOTION_WORD_BUDGET,
 ) -> CompiledMotionPrompt:
     """Compile motion instructions without re-injecting the long image prompt."""
-    if word_budget < 35:
-        raise ValueError("motion prompt word_budget must be at least 35")
-    prefix = (
-        "Locked camera. Preserve the exact keyframe composition, subject identity, lighting, "
-        "and geometry."
-    )
+    if word_budget < 32:
+        raise ValueError("motion prompt word_budget must be at least 32")
+    prefix = "Locked camera. Preserve keyframe composition, subject, lighting, and geometry."
     suffix = (
-        "Use subtle coherent environmental motion only. No text, screens, new objects, cuts, "
-        "zoom, shake, flicker, morphing, or anatomy changes."
+        "Subtle environmental motion only. No text, screens, new objects, cuts, zoom, shake, "
+        "flicker, morphing, or anatomy changes."
     )
     reserved = len(prefix.split()) + len(suffix.split())
     content = _core_sentences(_sanitize_motion_language(director_motion_prompt))

@@ -55,24 +55,81 @@ def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, Keyfra
     return result
 
 
+def _frame_to_uint8(frame: Any) -> Any:
+    """Normalize PIL, NumPy, or Torch Wan frames to contiguous RGB uint8 arrays.
+
+    Diffusers can return float32 HWC frames in [0, 1], float frames in [-1, 1],
+    or channel-first tensors. Pillow cannot construct RGB images directly from a
+    three-channel float array, which caused the v8 production failure after Wan
+    inference had already completed.
+    """
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise VideoGenerationError("Wan frame normalization requires numpy") from exc
+
+    if isinstance(frame, Image.Image):
+        return np.asarray(frame.convert("RGB"), dtype=np.uint8)
+
+    value = frame
+    detach = getattr(value, "detach", None)
+    if callable(detach):
+        value = detach()
+    cpu = getattr(value, "cpu", None)
+    if callable(cpu):
+        value = cpu()
+    numpy_method = getattr(value, "numpy", None)
+    if callable(numpy_method):
+        value = numpy_method()
+
+    array = np.asarray(value)
+    while array.ndim > 3 and array.shape[0] == 1:
+        array = array[0]
+    if array.ndim == 3 and array.shape[0] in {1, 3, 4} and array.shape[-1] not in {1, 3, 4}:
+        array = np.moveaxis(array, 0, -1)
+    if array.ndim == 2:
+        array = np.repeat(array[..., None], 3, axis=-1)
+    if array.ndim != 3:
+        raise VideoGenerationError(
+            f"Wan frame must resolve to HxWxC; received shape {array.shape}"
+        )
+    if array.shape[-1] == 1:
+        array = np.repeat(array, 3, axis=-1)
+    elif array.shape[-1] == 4:
+        array = array[..., :3]
+    elif array.shape[-1] != 3:
+        raise VideoGenerationError(
+            f"Wan frame must contain 1, 3, or 4 channels; received shape {array.shape}"
+        )
+
+    if np.issubdtype(array.dtype, np.floating):
+        array = np.nan_to_num(array, nan=0.0, posinf=1.0, neginf=0.0)
+        minimum = float(array.min())
+        maximum = float(array.max())
+        if minimum >= 0.0 and maximum <= 1.5:
+            array = array * 255.0
+        elif minimum >= -1.05 and maximum <= 1.05:
+            array = (array + 1.0) * 127.5
+        array = np.rint(np.clip(array, 0.0, 255.0)).astype(np.uint8)
+    else:
+        array = np.clip(array, 0, 255).astype(np.uint8, copy=False)
+    return np.ascontiguousarray(array)
+
+
 def _export_frames(frames: Iterable[Any], output: Path, *, fps: int) -> Path:
-    """Export Wan frames through the explicitly installed imageio FFmpeg backend."""
+    """Export normalized Wan frames through the pinned imageio FFmpeg backend."""
     try:
         import imageio.v2 as imageio
-        import numpy as np
     except ImportError as exc:
         raise VideoGenerationError(
             "Wan frame export requires imageio, imageio-ffmpeg, and numpy"
         ) from exc
-    arrays = []
-    for frame in frames:
-        if isinstance(frame, Image.Image):
-            converted = frame.convert("RGB")
-        else:
-            converted = Image.fromarray(np.asarray(frame)).convert("RGB")
-        arrays.append(np.asarray(converted, dtype=np.uint8))
+    arrays = [_frame_to_uint8(frame) for frame in frames]
     if not arrays:
         raise VideoGenerationError("Wan returned no frames to export")
+    expected_shape = arrays[0].shape
+    if any(array.shape != expected_shape for array in arrays):
+        raise VideoGenerationError("Wan returned frames with inconsistent dimensions")
     output.parent.mkdir(parents=True, exist_ok=True)
     try:
         imageio.mimwrite(
@@ -268,6 +325,7 @@ def generate_scene_media(
         "model_cpu_offload": True,
         "vae_tiling": True,
         "vae_slicing": True,
+        "frame_normalization": "float_or_tensor_to_contiguous_rgb_uint8",
         "image_prompt_reinjected_into_motion_prompt": False,
         "assets": [asset.as_dict() for asset in assets],
     }
