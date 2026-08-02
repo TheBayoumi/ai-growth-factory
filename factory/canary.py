@@ -14,6 +14,8 @@ from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
 from .policy import Strategy
 from .source_attributed_llm import generate_package
+from .trend_ranking import align_primary_sources_to_trends
+from .trend_sources import fetch_trend_snapshot
 from .video_qc import verify_video_output
 from .visual_pipeline import release_accelerator_memory, render_visual_plan
 from .visual_prompt import construct_visual_plan
@@ -83,7 +85,7 @@ def _copy_visual_audit(workdir: Path, destination: Path) -> None:
 
 
 def run_production_canary(settings: Settings, output_root: Path) -> dict[str, Any]:
-    """Execute the real source, voice, open-model visual, caption, and QC stack."""
+    """Execute live trend discovery plus the real voice, visual, caption, and QC stack."""
     started_at = datetime.now(timezone.utc)
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     canary_id = f"{stamp}-{hashlib.sha256(stamp.encode()).hexdigest()[:8]}"
@@ -99,13 +101,24 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             min_publishers=settings.min_primary_sources,
             fetcher=fetch_recent,
         )
-        sources = list(selection.items)
         source_publishers = set(selection.publishers)
         if selection.publisher_count < settings.min_primary_sources:
             raise RuntimeError(
                 f"Canary found only {selection.publisher_count} primary publishers "
                 f"within {selection.max_age_hours} hours; required {settings.min_primary_sources}"
             )
+
+        trend_snapshot = fetch_trend_snapshot(
+            max_age_hours=min(settings.max_source_age_hours, 72),
+        )
+        trend_alignment = align_primary_sources_to_trends(selection.items, trend_snapshot)
+        sources = list(trend_alignment.ranked_sources or selection.items)
+        trend_payload = trend_snapshot.as_dict()
+        trend_payload["alignment"] = trend_alignment.as_dict()
+        (destination / "trend-snapshot.json").write_text(
+            json.dumps(trend_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         with managed_llama_server(settings, research_dir):
             package = generate_package(settings, sources, CANARY_STRATEGY)
@@ -164,6 +177,9 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
         package_payload["strategy"] = asdict(CANARY_STRATEGY)
         package_payload["source_feed_publishers"] = sorted(source_publishers)
         package_payload["source_max_age_hours"] = selection.max_age_hours
+        package_payload["trend_signal_count"] = len(trend_snapshot.items)
+        package_payload["trend_provider_status"] = dict(trend_snapshot.provider_status)
+        package_payload["trend_match_count"] = len(trend_alignment.matches)
         (destination / "package.json").write_text(
             json.dumps(package_payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -182,6 +198,12 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             "strategy": CANARY_STRATEGY.key,
             "source_urls": package.source_urls,
             "source_max_age_hours": selection.max_age_hours,
+            "trends": {
+                "signal_count": len(trend_snapshot.items),
+                "provider_status": dict(trend_snapshot.provider_status),
+                "matched_primary_count": len(trend_alignment.matches),
+                "artifact": "trend-snapshot.json",
+            },
             "voice": {
                 "generator": settings.qwen_tts_model,
                 "reviewer": settings.reviewer_model,
