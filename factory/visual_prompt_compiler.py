@@ -18,6 +18,12 @@ _UI_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:control\s+panel|panel|console)\b", re.I), "minimal architectural surface"),
     (re.compile(r"\b(?:label|labels|headline|headlines|caption|captions|subtitle|subtitles)\b", re.I), ""),
 )
+_CAMERA_MOTION_RE = re.compile(
+    r"\b(?:the\s+)?camera\s+(?:slowly\s+|gently\s+)?(?:pushes|pulls|pans|tilts|zooms|"
+    r"orbits|tracks|dollies|moves|drifts|sweeps)(?:\s+(?:in|out|forward|backward|left|right|"
+    r"up|down|around))?\b[^.!?]*",
+    re.I,
+)
 _REDUNDANT_DIRECTIVE_RE = re.compile(
     r"(?:vertical\s+9\s*[:x]\s*16|704\s+by\s+1280|lower\s+32\s+percent|"
     r"separate\s+animated\s+caption|no\s+text|letters|numbers|logos?|watermarks?|"
@@ -55,6 +61,10 @@ def _sanitize_visual_language(value: str) -> str:
         result = pattern.sub(replacement, result)
     result = re.sub(r"\b(?:written|readable|legible|typographic|textual)\b", "", result, flags=re.I)
     return _clean(result)
+
+
+def _sanitize_motion_language(value: str) -> str:
+    return _clean(_CAMERA_MOTION_RE.sub("", _sanitize_visual_language(value)))
 
 
 def _core_sentences(value: str) -> str:
@@ -98,7 +108,7 @@ def compile_image_prompt(
     )
     reserved = len(prefix.split()) + len(suffix.split())
     content_budget = max(8, word_budget - reserved)
-    content = _sanitize_visual_language(_core_sentences(director_prompt))
+    content = _core_sentences(_sanitize_visual_language(director_prompt))
     content = _truncate_words(content, content_budget)
     compiled = _clean(f"{prefix} {content}. {suffix}")
     compiled = _truncate_words(compiled, word_budget)
@@ -145,7 +155,7 @@ def compile_motion_prompt(
         "zoom, shake, flicker, morphing, or anatomy changes."
     )
     reserved = len(prefix.split()) + len(suffix.split())
-    content = _sanitize_visual_language(_core_sentences(director_motion_prompt))
+    content = _core_sentences(_sanitize_motion_language(director_motion_prompt))
     content = _truncate_words(content, max(6, word_budget - reserved))
     compiled = _clean(f"{prefix} {content}. {suffix}")
     compiled = _truncate_words(compiled, word_budget)
