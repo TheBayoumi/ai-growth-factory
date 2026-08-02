@@ -21,7 +21,17 @@ worker_image = (
         add_python="3.12",
     )
     .entrypoint([])
-    .apt_install("ffmpeg", "libsndfile1", "sox", "libsox-fmt-all", "git")
+    .apt_install(
+        "ffmpeg",
+        "libsndfile1",
+        "sox",
+        "libsox-fmt-all",
+        "git",
+        "libgl1",
+        "libglib2.0-0",
+        "fontconfig",
+        "fonts-dejavu-core",
+    )
     .run_commands(
         "python -m pip install --upgrade pip wheel setuptools",
         (
@@ -40,18 +50,26 @@ worker_image = (
         "transformers==4.57.3",
         "accelerate==1.12.0",
         "qwen-omni-utils[decord]>=0.0.8",
+        "diffusers==0.39.0",
+        "huggingface-hub[hf_xet]>=0.34,<2",
+        "safetensors>=0.5,<1",
+        "ftfy>=6.3,<7",
+        "sentencepiece>=0.2,<1",
+        "einops>=0.8,<1",
     )
     .run_commands(
         (
             "python -c \"import decord, numba, numpy, torch, torchvision; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
-            "from transformers import Qwen2_5OmniForConditionalGeneration, "
-            "Qwen2_5OmniProcessor; "
+            "from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor; "
+            "from diffusers import AutoencoderKLWan, FluxPipeline, StableDiffusionXLPipeline, "
+            "UNet2DConditionModel, WanImageToVideoPipeline; "
             "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "print('Qwen TTS and native Omni runtime import preflight passed')\""
+            "print('Voice, reviewer, image, and Wan2.2 visual runtime import preflight passed')\""
         ),
+        "fc-cache -f -v >/dev/null",
     )
     .env(
         {
@@ -59,6 +77,7 @@ worker_image = (
             "HF_HUB_CACHE": MODEL_CACHE,
             "HF_XET_HIGH_PERFORMANCE": "1",
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "TOKENIZERS_PARALLELISM": "false",
             "WORK_ROOT": WORK_DIR,
             "STATE_ROOT": STATE_DIR,
             "LLAMA_CPP_EXECUTABLE": "/app/llama-server",
@@ -78,6 +97,17 @@ worker_image = (
             "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B",
             "QWEN_OMNI_MAX_NEW_TOKENS": "700",
             "AUDIO_WPM_TOLERANCE": "15",
+            "VISUAL_IMAGE_BACKEND": "auto",
+            "VISUAL_FLUX_MODEL": "black-forest-labs/FLUX.1-schnell",
+            "VISUAL_FLUX_STEPS": "4",
+            "VISUAL_SDXL_BASE_MODEL": "stabilityai/stable-diffusion-xl-base-1.0",
+            "VISUAL_SDXL_LIGHTNING_REPO": "ByteDance/SDXL-Lightning",
+            "VISUAL_SDXL_LIGHTNING_CHECKPOINT": "sdxl_lightning_4step_unet.safetensors",
+            "VISUAL_SDXL_LIGHTNING_STEPS": "4",
+            "WAN22_MODEL_ID": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+            "WAN22_FRAME_NUM": "81",
+            "WAN22_SAMPLE_STEPS": "24",
+            "WAN22_GUIDANCE_SCALE": "5.0",
             "VIDEO_WIDTH": "1080",
             "VIDEO_HEIGHT": "1920",
             "VIDEO_FPS": "30",
@@ -109,9 +139,9 @@ def _prepare_runtime() -> None:
 @app.function(
     image=worker_image,
     gpu="A10",
-    cpu=4.0,
-    memory=24576,
-    timeout=45 * 60,
+    cpu=8.0,
+    memory=65536,
+    timeout=85 * 60,
     max_containers=1,
     retries=modal.Retries(max_retries=1, backoff_coefficient=2.0),
     secrets=factory_secrets,
@@ -132,11 +162,12 @@ def daily_factory() -> dict[str, object]:
 @app.function(
     image=worker_image,
     gpu="A10",
-    cpu=4.0,
-    memory=24576,
-    timeout=45 * 60,
+    cpu=8.0,
+    memory=65536,
+    timeout=85 * 60,
     max_containers=1,
     retries=modal.Retries(max_retries=0),
+    secrets=factory_secrets,
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def render_production_canary() -> dict[str, object]:
@@ -156,9 +187,9 @@ def render_production_canary() -> dict[str, object]:
 @app.function(
     image=worker_image,
     gpu="A10",
-    cpu=4.0,
-    memory=24576,
-    timeout=45 * 60,
+    cpu=8.0,
+    memory=65536,
+    timeout=85 * 60,
     max_containers=1,
     secrets=factory_secrets,
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
