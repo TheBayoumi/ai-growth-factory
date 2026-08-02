@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import contextvars
+import json
+from pathlib import Path
 from statistics import mean
 from typing import Any, Sequence
 
@@ -79,13 +81,27 @@ def _production_temporal_stability(
     )
 
 
-def install_production_video_qc() -> None:
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    video_qc._raw_gray_frames = _upper_visual_frames
-    video_qc._temporal_stability = _production_temporal_stability
-    _INSTALLED = True
+def _infer_scene_media_types(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[str, ...]:
+    explicit = kwargs.pop("scene_media_types", None)
+    if explicit is not None:
+        return tuple(str(value).strip().lower() for value in explicit)
+    video_path = kwargs.get("video_path")
+    if video_path is None and len(args) >= 2:
+        video_path = args[1]
+    try:
+        path = Path(video_path)
+        manifest = path.parent.parent / "scene-media" / "scene-media-manifest.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        assets = sorted(
+            data.get("assets") or [],
+            key=lambda item: int(item.get("scene_index", -1)),
+        )
+        return tuple(
+            str(item.get("media_type") or "").strip().lower()
+            for item in assets
+        )
+    except Exception:
+        return ()
 
 
 def verify_production_video_output(
@@ -94,7 +110,6 @@ def verify_production_video_output(
     **kwargs: Any,
 ) -> Any:
     """Apply strict motion QC only to generated video scenes, not intentional stills."""
-    install_production_video_qc()
     normalized = tuple(str(value).strip().lower() for value in (scene_media_types or ()))
     if any(value not in {"image", "video"} for value in normalized):
         raise video_qc.VideoQCError(f"Unsupported scene media type sequence: {normalized}")
@@ -103,3 +118,22 @@ def verify_production_video_output(
         return _ORIGINAL_VERIFY(*args, **kwargs)
     finally:
         _MEDIA_TYPES.reset(token)
+
+
+def install_production_video_qc() -> None:
+    global _INSTALLED
+    if _INSTALLED:
+        return
+    video_qc._raw_gray_frames = _upper_visual_frames
+    video_qc._temporal_stability = _production_temporal_stability
+
+    def installed_verify(*args: Any, **kwargs: Any) -> Any:
+        media_types = _infer_scene_media_types(args, kwargs)
+        return verify_production_video_output(
+            *args,
+            scene_media_types=media_types,
+            **kwargs,
+        )
+
+    video_qc.verify_video_output = installed_verify
+    _INSTALLED = True
