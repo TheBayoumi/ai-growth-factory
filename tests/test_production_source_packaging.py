@@ -18,6 +18,8 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "production_visual_routing.py",
             "production_renderer.py",
             "production_runtime.py",
+            "trend_sources.py",
+            "trend_ranking.py",
             "visual_prompt.py",
             "image_generator.py",
             "video_generator.py",
