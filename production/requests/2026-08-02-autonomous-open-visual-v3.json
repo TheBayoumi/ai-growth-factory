@@ -1,0 +1,38 @@
+{
+  "request_id": "2026-08-02-autonomous-open-visual-v3",
+  "requested_at": "2026-08-02T04:15:00+03:00",
+  "mode": "production_render",
+  "publish": false,
+  "platforms": ["youtube_shorts", "tiktok", "instagram_reels"],
+  "quality_profile": "autonomous_open_visual_v3",
+  "corrections": {
+    "lexical_phrase_boundaries": true,
+    "unsupported_cross_source_relationship_rejection": true,
+    "actionable_qwen_reject_segment_retry": true,
+    "deterministic_exactly_three_wan_routes": true
+  },
+  "visual_architecture": {
+    "prompt_construction": "source_grounded_qwen_visual_director",
+    "routing": "deterministic_semantic_role_router",
+    "keyframes": 6,
+    "image_backend": "auto_flux_or_sdxl_lightning",
+    "wan22_hero_scenes": 3,
+    "caption_rendering": "separate_animated_ass_layer",
+    "captions_baked_into_generated_media": false,
+    "resolution": "1080x1920",
+    "fps": 30
+  },
+  "acceptance": {
+    "one_coherent_source_grounded_story": true,
+    "complete_visual_plan": true,
+    "source_indices_unchanged": true,
+    "text_free_generated_media": true,
+    "six_diverse_keyframes": true,
+    "three_wan22_clips": true,
+    "phrase_level_animated_captions": true,
+    "reviewed_qwen3_tts": true,
+    "native_omni_audio_review": true,
+    "prompt_seed_and_model_manifests": true,
+    "human_perceptual_review_required": true
+  }
+}
