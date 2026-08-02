@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from .visual_prompt_compiler import (
@@ -25,6 +26,86 @@ PRODUCTION VISUAL DIVERSITY RULES:
 - The recurring continuity anchor must remain secondary and occupy less than 15 percent of the composition.
 """.strip()
 
+_TREATMENTS = {
+    "hook": (
+        "Create an immediate human-scale opening moment with one unmistakable consequence in the foreground. Use an asymmetric close composition, strong depth separation, and one concrete subject rather than a symbolic AI object.",
+        "Reveal the concrete consequence through one controlled change in depth, illumination, or subject action while every object keeps its shape.",
+    ),
+    "evidence": (
+        "Build a physical evidence composition using clearly different groups, quantities, distances, or material states. The contrast must be visible without written labels, numbers, screens, or infographic panels.",
+        "Progressively emphasize the evidence groups in a readable sequence, preserving their count, position, and identity throughout the shot.",
+    ),
+    "mechanism": (
+        "Show a directional cause-to-result mechanism as a tangible pathway, handoff, laboratory process, or sequence of connected physical stages. The primary subject must be the process itself, not a generic glowing core.",
+        "Animate the mechanism from input through intermediate stages to outcome, with one directional flow and no new objects appearing.",
+    ),
+    "comparison": (
+        "Construct a split or mirrored composition with two visibly different workflows, environments, or outcomes. Each side must have a distinct silhouette and spatial organization while sharing only the secondary palette and lighting language.",
+        "Shift visual emphasis from the first arrangement to the second, keeping both comparison sides stable and continuously visible.",
+    ),
+    "implication": (
+        "Use a wider environmental composition that shows how the factual change affects people, infrastructure, research practice, or scale. Keep the consequence concrete and distribute activity across foreground, middle distance, and background.",
+        "Expand subtle activity outward from the main subject into the wider environment without changing the camera or inventing additional claims.",
+    ),
+    "cta": (
+        "End on a human-scale practical decision or unresolved next step. Use a calm final composition with one person, tool, pathway, or open workspace that visually invites evaluation rather than resembling a logo or generic technology emblem.",
+        "Settle the scene into a deliberate final state, leaving one practical choice visually unresolved and preserving all subject details.",
+    ),
+}
+_INDEX_FALLBACKS = (
+    "foreground consequence",
+    "grouped physical evidence",
+    "directional mechanism",
+    "side-by-side comparison",
+    "wide environmental implication",
+    "human-scale decision",
+)
+
+
+def _scene_specific_repair(plan: Any, package: Any) -> Any:
+    """Convert validated scene facts into deterministic, role-specific visual grammar.
+
+    The language model remains responsible for topic selection, factual package content,
+    scene roles, global style, palette, and continuity. This fallback is invoked only
+    when its executable prompts still collapse after the bounded director retries.
+    It preserves each package scene's heading/body/visual while guaranteeing a different
+    composition and motion grammar for every scene before GPU generation.
+    """
+    package_scenes = list(package.scenes)
+    repaired = []
+    for index, scene in enumerate(plan.scenes):
+        source_scene = package_scenes[index]
+        role = str(scene.role).strip().lower()
+        image_treatment, motion_treatment = _TREATMENTS.get(
+            role,
+            _TREATMENTS["implication"],
+        )
+        unique_grammar = _INDEX_FALLBACKS[index % len(_INDEX_FALLBACKS)]
+        image_prompt = (
+            f"Depict {source_scene.heading}. {source_scene.visual}. "
+            f"The factual consequence is: {source_scene.body}. "
+            f"Use the unique composition grammar of {unique_grammar}. {image_treatment} "
+            "Keep all generated media free of written text, labels, logos, and watermarks. "
+            "Place the primary subject in the upper two-thirds and keep the lower third visually quiet for separate captions."
+        )
+        motion_prompt = (
+            f"Animate the specific subject of {source_scene.heading}. {motion_treatment} "
+            f"Preserve the {unique_grammar} composition, subject identity, lighting, and geometry."
+        )
+        repaired.append(
+            replace(
+                scene,
+                image_prompt=image_prompt,
+                motion_prompt=motion_prompt,
+                continuity_anchor=(
+                    f"secondary palette accent for {source_scene.heading}; never the primary subject"
+                ),
+            )
+        )
+    repaired_plan = replace(plan, scenes=tuple(repaired))
+    validate_compiled_prompt_diversity(repaired_plan.scenes)
+    return repaired_plan
+
 
 def install_production_visual_semantics() -> None:
     """Validate executable prompt diversity and bind scene semantics to Wan motion."""
@@ -43,8 +124,14 @@ def install_production_visual_semantics() -> None:
 
     def validate(raw: dict[str, Any], **kwargs: Any) -> Any:
         plan = original_validate(raw, **kwargs)
-        validate_compiled_prompt_diversity(plan.scenes)
-        return plan
+        try:
+            validate_compiled_prompt_diversity(plan.scenes)
+            return plan
+        except ValueError:
+            package = kwargs.get("package")
+            if package is None:
+                raise
+            return _scene_specific_repair(plan, package)
 
     def animate(self: Any, scene: Any, keyframe: Any, output: Any) -> Any:
         original_compiler = video_generator.compile_motion_prompt
