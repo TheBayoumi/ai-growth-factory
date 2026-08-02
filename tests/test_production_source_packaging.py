@@ -16,6 +16,8 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "production_reviewer_feedback.py",
             "production_voice_repair.py",
             "production_visual_routing.py",
+            "production_visual_semantics.py",
+            "production_video_qc.py",
             "production_renderer.py",
             "production_runtime.py",
             "trend_sources.py",
@@ -62,6 +64,17 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         self.assertIn('"imageio==2.37.0"', project)
         self.assertIn("import decord, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
+
+    def test_runtime_installs_semantic_visual_and_media_aware_qc_policies(self):
+        source = (ROOT / "factory" / "production_runtime.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("install_production_visual_semantics", source)
+        self.assertIn("install_production_video_qc", source)
+        self.assertLess(
+            source.index("install_production_visual_routing()"),
+            source.index("install_production_visual_semantics()"),
+        )
 
 
 if __name__ == "__main__":

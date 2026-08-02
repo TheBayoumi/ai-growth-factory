@@ -2,20 +2,22 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any, Iterable
 
 
-PROMPT_COMPILER_VERSION = "visual-compiler-v3"
-_IMAGE_WORD_BUDGET = 42
-_IMAGE_CHARACTER_BUDGET = 300
+PROMPT_COMPILER_VERSION = "visual-compiler-v4"
+_IMAGE_WORD_BUDGET = 44
+_IMAGE_CHARACTER_BUDGET = 320
 _MOTION_WORD_BUDGET = 48
 
 _SPACE_RE = re.compile(r"\s+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,}")
 _UI_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\b(?:user\s+interface|interface|dashboard|gui|ui)\b", re.I), "abstract light sculpture"),
-    (re.compile(r"\b(?:computer\s+screen|screen|monitor|display)\b", re.I), "soft luminous plane"),
-    (re.compile(r"\b(?:tablet|phone|smartphone|laptop)\b", re.I), "plain unmarked glass object"),
-    (re.compile(r"\b(?:data\s+visualization|chart|graph|diagram)\b", re.I), "flowing abstract light"),
+    (re.compile(r"\b(?:user\s+interface|interface|dashboard|gui|ui)\b", re.I), "abstract light structure"),
+    (re.compile(r"\b(?:computer\s+screen|screen|monitor|display)\b", re.I), "unmarked luminous plane"),
+    (re.compile(r"\b(?:tablet|phone|smartphone|laptop)\b", re.I), "plain glass object"),
+    (re.compile(r"\b(?:data\s+visualization|chart|graph|diagram)\b", re.I), "spatial arrangement"),
     (re.compile(r"\b(?:control\s+panel|panel|console)\b", re.I), "minimal architectural surface"),
     (re.compile(r"\b(?:label|labels|headline|headlines|caption|captions|subtitle|subtitles)\b", re.I), ""),
 )
@@ -31,6 +33,24 @@ _REDUNDANT_DIRECTIVE_RE = re.compile(
     r"trademarks?|interface\s+labels?|signatures?|borders?)",
     re.I,
 )
+_GENERIC_CLAUSE_TERMS = {
+    "abstract", "cinematic", "clean", "digital", "glow", "glowing", "interface",
+    "lighting", "minimalist", "represents", "sphere", "system", "technology",
+}
+_SIGNATURE_STOP = {
+    "abstract", "animate", "caption", "captions", "cinematic", "coherent", "dark",
+    "editorial", "empty", "frame", "geometry", "image", "interfaces", "light",
+    "lighting", "lower", "motion", "portrait", "preserve", "realistic", "reserved",
+    "scene", "stable", "subject", "subtle", "text", "third",
+}
+_ROLE_MOTION = {
+    "hook": "Reveal the main subject with one clear change in light and depth.",
+    "evidence": "Move evidence elements in an orderly sequence so the comparison is readable without text.",
+    "mechanism": "Animate one directional process from cause to result while preserving all objects.",
+    "comparison": "Shift emphasis between the two contrasted arrangements without moving the camera.",
+    "implication": "Expand subtle environmental activity around the subject to suggest broader consequences.",
+    "cta": "Settle the scene into a confident final state with restrained ambient motion.",
+}
 
 
 @dataclass(frozen=True)
@@ -68,14 +88,55 @@ def _sanitize_motion_language(value: str) -> str:
     return _clean(_CAMERA_MOTION_RE.sub("", _sanitize_visual_language(value)))
 
 
-def _core_sentences(value: str) -> str:
+def _candidate_clauses(value: str) -> list[str]:
     candidates: list[str] = []
     for sentence in _SENTENCE_RE.split(value):
         clean = _clean(sentence)
         if not clean or _REDUNDANT_DIRECTIVE_RE.search(clean):
             continue
         candidates.append(clean)
-    return ". ".join(candidates) or _clean(value)
+    return candidates or [_clean(value)]
+
+
+def _clause_score(clause: str, index: int) -> tuple[float, int]:
+    lowered = clause.casefold()
+    tokens = set(_TOKEN_RE.findall(lowered))
+    score = float(len(tokens - _GENERIC_CLAUSE_TERMS))
+    if any(marker in lowered for marker in (
+        "showing", "depicting", "illustrating", "visualize", "human", "world",
+        "multilingual", "satisfaction", "comparison", "response", "network", "pathway",
+    )):
+        score += 12.0
+    if "represents the ai system" in lowered or "floating abstract sphere" in lowered:
+        score -= 14.0
+    if any(term in lowered for term in (
+        "lighting is", "color palette", "lower 32 percent", "clean, minimalist",
+    )):
+        score -= 8.0
+    return score, -index
+
+
+def _focus_clause(clause: str) -> str:
+    lowered = clause.casefold()
+    for marker in ("showing ", "depicting ", "illustrating ", "displaying "):
+        position = lowered.find(marker)
+        if position >= 0:
+            focused = clause[position + len(marker):].strip(" ,.;")
+            return _clean(f"Visualize {focused}")
+    return clause
+
+
+def _distinctive_content(value: str) -> str:
+    clauses = _candidate_clauses(_sanitize_visual_language(value))
+    ranked = sorted(
+        enumerate(clauses),
+        key=lambda item: _clause_score(item[1], item[0]),
+        reverse=True,
+    )
+    for _index, clause in ranked:
+        if clause:
+            return _focus_clause(clause)
+    return "factual technology subject"
 
 
 def _truncate_words(value: str, maximum: int) -> str:
@@ -95,19 +156,59 @@ def _truncate_content(value: str, *, maximum_words: int, maximum_characters: int
     return shortened[:boundary].rstrip(" ,.;:")
 
 
+def _signature(value: str) -> frozenset[str]:
+    return frozenset(
+        token for token in _TOKEN_RE.findall(value.casefold()) if token not in _SIGNATURE_STOP
+    )
+
+
+def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
+    union = left | right
+    return len(left & right) / len(union) if union else 1.0
+
+
+def validate_compiled_prompt_diversity(scenes: Iterable[Any]) -> None:
+    """Reject plans whose executable prompts collapse into one repeated visual motif."""
+    image_prompts: list[tuple[int, str, frozenset[str]]] = []
+    motion_prompts: list[tuple[int, str, frozenset[str]]] = []
+    for scene in scenes:
+        image = compile_image_prompt(scene.image_prompt, scene.negative_prompt)
+        image_prompts.append(
+            (scene.scene_index, image.compiled_prompt, _signature(image.compiled_prompt))
+        )
+        if scene.generation_mode == "wan_i2v":
+            motion = compile_motion_prompt(
+                scene.motion_prompt,
+                semantic_context=scene.image_prompt,
+                role=scene.role,
+            )
+            motion_prompts.append(
+                (scene.scene_index, motion.compiled_motion_prompt, _signature(motion.compiled_motion_prompt))
+            )
+
+    for collection, label, threshold in (
+        (image_prompts, "image", 0.76),
+        (motion_prompts, "motion", 0.82),
+    ):
+        for offset, (left_index, left_text, left_signature) in enumerate(collection):
+            for right_index, right_text, right_signature in collection[offset + 1 :]:
+                if (
+                    left_text.casefold() == right_text.casefold()
+                    or _jaccard(left_signature, right_signature) >= threshold
+                ):
+                    raise ValueError(
+                        f"Compiled {label} prompts for scenes {left_index} and {right_index} "
+                        "are not semantically distinct"
+                    )
+
+
 def compile_image_prompt(
     director_prompt: str,
     director_negative_prompt: str = "",
     *,
     word_budget: int = _IMAGE_WORD_BUDGET,
 ) -> CompiledVisualPrompt:
-    """Compile rich direction into a conservative SDXL CLIP-safe prompt.
-
-    Word count alone did not protect v8: 64 words expanded to 93 CLIP tokens and
-    truncated the caption-safe suffix. This compiler uses a shorter fixed contract,
-    a 42-word ceiling, and a 300-character ceiling while preserving the complete
-    director prompt separately for audit.
-    """
+    """Compile rich direction into a CLIP-safe prompt that preserves the unique scene idea."""
     if word_budget < 36:
         raise ValueError("image prompt word_budget must be at least 36")
     prefix = "Text-free cinematic editorial image. No screens, signs, symbols, logos, or interfaces."
@@ -117,11 +218,11 @@ def compile_image_prompt(
     )
     fixed_words = len(prefix.split()) + len(suffix.split())
     fixed_characters = len(prefix) + len(suffix) + 3
-    content = _core_sentences(_sanitize_visual_language(director_prompt))
+    content = _distinctive_content(director_prompt)
     content = _truncate_content(
         content,
-        maximum_words=max(6, word_budget - fixed_words),
-        maximum_characters=max(50, _IMAGE_CHARACTER_BUDGET - fixed_characters),
+        maximum_words=max(7, word_budget - fixed_words),
+        maximum_characters=max(70, _IMAGE_CHARACTER_BUDGET - fixed_characters),
     )
     compiled = _clean(f"{prefix} {content}. {suffix}")
     if len(compiled.split()) > word_budget or len(compiled) > _IMAGE_CHARACTER_BUDGET:
@@ -155,19 +256,32 @@ def compile_image_prompt(
 def compile_motion_prompt(
     director_motion_prompt: str,
     *,
+    semantic_context: str = "",
+    role: str = "",
     word_budget: int = _MOTION_WORD_BUDGET,
 ) -> CompiledMotionPrompt:
-    """Compile motion instructions without re-injecting the long image prompt."""
+    """Compile scene-specific motion without reinjecting the full image prompt."""
     if word_budget < 32:
         raise ValueError("motion prompt word_budget must be at least 32")
     prefix = "Locked camera. Preserve keyframe composition, subject, lighting, and geometry."
     suffix = (
-        "Subtle environmental motion only. No text, screens, new objects, cuts, zoom, shake, "
+        "Subtle coherent motion only. No text, screens, new objects, cuts, zoom, shake, "
         "flicker, morphing, or anatomy changes."
     )
-    reserved = len(prefix.split()) + len(suffix.split())
-    content = _core_sentences(_sanitize_motion_language(director_motion_prompt))
-    content = _truncate_words(content, max(6, word_budget - reserved))
+    semantic = _truncate_words(_distinctive_content(semantic_context), 9) if semantic_context else ""
+    role_instruction = _ROLE_MOTION.get(
+        role.casefold(),
+        "Animate one clear internal change without moving the camera.",
+    )
+    raw_motion = _truncate_words(
+        _distinctive_content(_sanitize_motion_language(director_motion_prompt)),
+        10,
+    )
+    fixed = len(prefix.split()) + len(suffix.split())
+    content = _truncate_words(
+        _clean(f"Animate {semantic}. {role_instruction} {raw_motion}"),
+        max(8, word_budget - fixed),
+    )
     compiled = _clean(f"{prefix} {content}. {suffix}")
     compiled = _truncate_words(compiled, word_budget)
     return CompiledMotionPrompt(

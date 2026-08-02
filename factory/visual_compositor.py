@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 import imageio_ffmpeg
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from .caption_renderer import write_animated_caption_track
 from .models import NarrationSegment, VideoPackage
@@ -19,6 +19,8 @@ class VisualCompositionError(RuntimeError):
 
 
 _TRANSITION_SECONDS = 0.10
+_THUMBNAIL_WIDTH = 1280
+_THUMBNAIL_HEIGHT = 720
 
 
 def _audio_duration(path: Path) -> float:
@@ -61,15 +63,53 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _fit_text(draw: ImageDraw.ImageDraw, text: str, width: int, maximum_size: int) -> ImageFont.ImageFont:
+def _fit_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    width: int,
+    maximum_size: int,
+) -> ImageFont.ImageFont:
     size = maximum_size
     while size >= 32:
         font = _font(size)
-        box = draw.multiline_textbbox((0, 0), text, font=font, spacing=8, align="center")
+        box = draw.multiline_textbbox((0, 0), text, font=font, spacing=10, align="left")
         if box[2] - box[0] <= width:
             return font
         size -= 4
     return _font(32)
+
+
+def _wrap_title(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    font: ImageFont.ImageFont,
+    width: int,
+) -> str:
+    words = title.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        box = draw.textbbox((0, 0), candidate, font=font, stroke_width=2)
+        if current and box[2] - box[0] > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return "\n".join(lines[:4])
+
+
+def _cover(image: Image.Image, width: int, height: int) -> Image.Image:
+    ratio = max(width / image.width, height / image.height)
+    resized = image.resize(
+        (int(round(image.width * ratio)), int(round(image.height * ratio))),
+        Image.Resampling.LANCZOS,
+    )
+    left = max(0, (resized.width - width) // 2)
+    top = max(0, (resized.height - height) // 2)
+    return resized.crop((left, top, left + width, top + height))
 
 
 def _thumbnail(
@@ -77,48 +117,75 @@ def _thumbnail(
     package: VideoPackage,
     output: Path,
     *,
-    width: int,
-    height: int,
+    width: int = _THUMBNAIL_WIDTH,
+    height: int = _THUMBNAIL_HEIGHT,
 ) -> None:
+    """Create a dedicated horizontal YouTube thumbnail from a portrait keyframe."""
     with Image.open(keyframe_path) as source:
-        image = source.convert("RGB")
-    ratio = max(width / image.width, height / image.height)
-    image = image.resize(
-        (int(round(image.width * ratio)), int(round(image.height * ratio))),
-        Image.Resampling.LANCZOS,
+        portrait = source.convert("RGB")
+
+    background = _cover(portrait, width, height).filter(ImageFilter.GaussianBlur(radius=26))
+    background = ImageEnhance.Brightness(background).enhance(0.34)
+    background = ImageEnhance.Contrast(background).enhance(1.15)
+    canvas = background.convert("RGBA")
+    draw = ImageDraw.Draw(canvas)
+
+    hero_height = int(height * 0.90)
+    hero_width = int(hero_height * portrait.width / max(1, portrait.height))
+    hero = portrait.resize((hero_width, hero_height), Image.Resampling.LANCZOS)
+    hero = ImageEnhance.Contrast(hero).enhance(1.08)
+    hero_x = 54
+    hero_y = (height - hero_height) // 2
+    shadow = Image.new("RGBA", (hero_width + 28, hero_height + 28), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle(
+        (14, 14, hero_width + 14, hero_height + 14),
+        radius=28,
+        fill=(0, 0, 0, 175),
     )
-    left = max(0, (image.width - width) // 2)
-    top = max(0, (image.height - height) // 2)
-    image = image.crop((left, top, left + width, top + height))
-    image = ImageEnhance.Contrast(image).enhance(1.08)
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    for y in range(height):
-        alpha = int(210 * max(0.0, (y / height - 0.46) / 0.54))
-        if alpha:
-            draw.line((0, y, width, y), fill=(4, 8, 18, alpha))
-    title = package.thumbnail_text.strip().upper()
-    font = _fit_text(draw, title, int(width * 0.82), int(height * 0.075))
-    box = draw.multiline_textbbox((0, 0), title, font=font, spacing=8, align="center", stroke_width=3)
-    text_width = box[2] - box[0]
+    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=16))
+    canvas.alpha_composite(shadow, (hero_x - 14, hero_y - 14))
+    hero_mask = Image.new("L", hero.size, 0)
+    ImageDraw.Draw(hero_mask).rounded_rectangle(
+        (0, 0, hero_width, hero_height), radius=24, fill=255
+    )
+    canvas.paste(hero, (hero_x, hero_y), hero_mask)
+
+    panel_left = max(int(width * 0.52), hero_x + hero_width + 44)
+    panel_right = width - 70
+    panel_width = max(360, panel_right - panel_left)
+    draw.rounded_rectangle(
+        (panel_left - 28, 82, panel_right + 18, height - 82),
+        radius=34,
+        fill=(5, 10, 22, 188),
+        outline=(85, 200, 255, 150),
+        width=3,
+    )
+    draw.rounded_rectangle(
+        (panel_left, 126, panel_left + 116, 138),
+        radius=6,
+        fill=(82, 210, 255, 255),
+    )
+    title = package.thumbnail_text.strip().upper() or package.title.strip().upper()
+    font = _fit_text(draw, title, panel_width - 18, int(height * 0.105))
+    wrapped = _wrap_title(draw, title, font, panel_width - 18)
+    box = draw.multiline_textbbox(
+        (0, 0), wrapped, font=font, spacing=12, align="left", stroke_width=3
+    )
     text_height = box[3] - box[1]
-    x = (width - text_width) / 2
-    y = height * 0.72 - text_height / 2
+    text_y = max(168, (height - text_height) // 2)
     draw.multiline_text(
-        (x, y),
-        title,
+        (panel_left, text_y),
+        wrapped,
         font=font,
         fill=(255, 255, 255, 255),
         stroke_width=3,
-        stroke_fill=(5, 8, 16, 235),
-        spacing=8,
-        align="center",
+        stroke_fill=(2, 5, 12, 245),
+        spacing=12,
+        align="left",
     )
-    Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB").save(
-        output,
-        format="PNG",
-        optimize=True,
-    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    canvas.convert("RGB").save(output, format="PNG", optimize=True)
 
 
 def compose_platform_video(
@@ -254,11 +321,11 @@ def compose_platform_video(
         ordered_media[0].keyframe_path,
         package,
         thumbnail,
-        width=width,
-        height=height,
+        width=_THUMBNAIL_WIDTH,
+        height=_THUMBNAIL_HEIGHT,
     )
     manifest = {
-        "renderer": "ffmpeg_ass_hybrid_v1",
+        "renderer": "ffmpeg_ass_hybrid_v2",
         "captions_baked_into_generated_media": False,
         "caption_layer": str(caption_path),
         "caption_cues": len(cues),
@@ -270,6 +337,12 @@ def compose_platform_video(
             "height": height,
             "fps": fps,
             "audio_path": str(audio_path),
+        },
+        "thumbnail": {
+            "path": str(thumbnail),
+            "width": _THUMBNAIL_WIDTH,
+            "height": _THUMBNAIL_HEIGHT,
+            "profile": "youtube_horizontal",
         },
     }
     (workdir / "visual-composition-manifest.json").write_text(

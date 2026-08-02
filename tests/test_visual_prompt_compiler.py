@@ -13,8 +13,8 @@ class VisualPromptCompilerTests(unittest.TestCase):
         )
         compiled = compile_image_prompt(director, "watermark, text, logo, watermark")
 
-        self.assertLessEqual(compiled.word_count, 42)
-        self.assertLessEqual(len(compiled.compiled_prompt), 300)
+        self.assertLessEqual(compiled.word_count, 44)
+        self.assertLessEqual(len(compiled.compiled_prompt), 320)
         self.assertTrue(compiled.compiled_prompt.startswith("Text-free cinematic editorial image"))
         self.assertIn("Subject high in frame", compiled.compiled_prompt)
         self.assertIn("Dark empty lower third reserved for captions", compiled.compiled_prompt)
@@ -23,7 +23,7 @@ class VisualPromptCompilerTests(unittest.TestCase):
         self.assertNotIn("dashboard", compiled.compiled_prompt.lower())
         self.assertNotIn("user interface explains", compiled.compiled_prompt.lower())
         self.assertEqual(compiled.director_prompt, director)
-        self.assertEqual(compiled.compiler_version, "visual-compiler-v3")
+        self.assertEqual(compiled.compiler_version, "visual-compiler-v4")
         negative_tokens = [part.strip() for part in compiled.negative_prompt.split(",")]
         self.assertEqual(len(negative_tokens), len(set(negative_tokens)))
         self.assertIn("screens", negative_tokens)
@@ -38,8 +38,8 @@ class VisualPromptCompilerTests(unittest.TestCase):
         )
         compiled = compile_image_prompt(director)
 
-        self.assertLessEqual(compiled.word_count, 42)
-        self.assertLessEqual(len(compiled.compiled_prompt), 300)
+        self.assertLessEqual(compiled.word_count, 44)
+        self.assertLessEqual(len(compiled.compiled_prompt), 320)
         self.assertIn("Dark empty lower third reserved for captions", compiled.compiled_prompt)
         self.assertTrue(compiled.compiled_prompt.endswith("realistic light"))
 
