@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from dataclasses import asdict, dataclass
@@ -308,6 +309,23 @@ def _stable_seed(title: str, scene_index: int) -> int:
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
+def _planned_image_model() -> str:
+    backend = os.getenv("VISUAL_IMAGE_BACKEND", "auto").strip().lower()
+    if backend == "flux" or (backend == "auto" and os.getenv("HF_TOKEN")):
+        return os.getenv(
+            "VISUAL_FLUX_MODEL",
+            "black-forest-labs/FLUX.1-schnell",
+        ).strip()
+    return (
+        os.getenv("VISUAL_SDXL_LIGHTNING_REPO", "ByteDance/SDXL-Lightning").strip()
+        + ":"
+        + os.getenv(
+            "VISUAL_SDXL_LIGHTNING_CHECKPOINT",
+            "sdxl_lightning_4step_unet.safetensors",
+        ).strip()
+    )
+
+
 def _validate_and_normalize(
     raw: dict[str, Any],
     *,
@@ -331,12 +349,18 @@ def _validate_and_normalize(
             raise VisualPromptError(f"Duplicate visual scene_index: {index}")
         by_index[index] = value
 
-    if set(by_index) != set(range(len(package.scenes))):
+    expected_indices = set(range(len(package.scenes)))
+    if set(by_index) != expected_indices:
         raise VisualPromptError("Visual scene indices must be contiguous and match the package")
 
-    modes = [_clean_prompt(by_index[index].get("generation_mode")).lower() for index in by_index]
-    if modes.count("wan_i2v") != 3 or any(mode not in {"image", "wan_i2v"} for mode in modes):
+    modes = {
+        index: _clean_prompt(by_index[index].get("generation_mode")).lower()
+        for index in sorted(by_index)
+    }
+    if sum(mode == "wan_i2v" for mode in modes.values()) != 3:
         raise VisualPromptError("Visual plan must route exactly three scenes to wan_i2v")
+    if any(mode not in {"image", "wan_i2v"} for mode in modes.values()):
+        raise VisualPromptError("Visual plan contains an unsupported generation_mode")
     if modes[0] != "wan_i2v":
         raise VisualPromptError("Opening hook scene must use wan_i2v")
 
@@ -407,8 +431,11 @@ def _validate_and_normalize(
         palette=palette,
         lighting=lighting,
         continuity_bible=continuity_bible,
-        image_model="black-forest-labs/FLUX.1-schnell",
-        video_model="Wan-AI/Wan2.2-TI2V-5B",
+        image_model=_planned_image_model(),
+        video_model=os.getenv(
+            "WAN22_MODEL_ID",
+            "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        ).strip(),
         width=704,
         height=1280,
         fps=24,
