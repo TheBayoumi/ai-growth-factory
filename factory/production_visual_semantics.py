@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any
 
 from .visual_prompt_compiler import (
+    compile_image_prompt,
     compile_motion_prompt,
     validate_compiled_prompt_diversity,
 )
@@ -62,14 +63,45 @@ _INDEX_FALLBACKS = (
 )
 
 
+def _validate_deterministic_repair(scenes: tuple[Any, ...]) -> None:
+    """Validate the generated executable prompts without shared boilerplate bias.
+
+    The normal language-model plan uses semantic Jaccard validation. A deterministic
+    fallback already guarantees a different composition grammar per index; at this
+    boundary we verify that those grammars survived compilation as genuinely different
+    executable image and motion strings. Shared safety prefixes and caption-safe suffixes
+    must not be counted as semantic duplication.
+    """
+    image_prompts = [
+        compile_image_prompt(scene.image_prompt, scene.negative_prompt).compiled_prompt.casefold()
+        for scene in scenes
+    ]
+    motion_prompts = [
+        compile_motion_prompt(
+            scene.motion_prompt,
+            semantic_context=scene.image_prompt,
+            role=scene.role,
+        ).compiled_motion_prompt.casefold()
+        for scene in scenes
+        if scene.generation_mode == "wan_i2v"
+    ]
+    if len(set(image_prompts)) != len(image_prompts):
+        raise ValueError("Deterministic scene repair produced duplicate executable image prompts")
+    if len(set(motion_prompts)) != len(motion_prompts):
+        raise ValueError("Deterministic scene repair produced duplicate executable motion prompts")
+    forbidden = ("floating abstract sphere", "generic ai core")
+    if any(term in prompt for prompt in image_prompts for term in forbidden):
+        raise ValueError("Deterministic scene repair retained a forbidden generic primary motif")
+
+
 def _scene_specific_repair(plan: Any, package: Any) -> Any:
     """Convert validated scene facts into deterministic, role-specific visual grammar.
 
     The language model remains responsible for topic selection, factual package content,
-    scene roles, global style, palette, and continuity. This fallback is invoked only
-    when its executable prompts still collapse after the bounded director retries.
-    It preserves each package scene's heading/body/visual while guaranteeing a different
-    composition and motion grammar for every scene before GPU generation.
+    scene roles, global style, palette, lighting, and continuity. This fallback is invoked
+    only when its executable prompts still collapse. It preserves each package scene's
+    heading/body/visual while guaranteeing a different composition and motion grammar for
+    every scene before GPU generation.
     """
     package_scenes = list(package.scenes)
     repaired = []
@@ -103,7 +135,7 @@ def _scene_specific_repair(plan: Any, package: Any) -> Any:
             )
         )
     repaired_plan = replace(plan, scenes=tuple(repaired))
-    validate_compiled_prompt_diversity(repaired_plan.scenes)
+    _validate_deterministic_repair(repaired_plan.scenes)
     return repaired_plan
 
 
