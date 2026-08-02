@@ -23,11 +23,25 @@ class VisualPromptCompilerTests(unittest.TestCase):
         self.assertNotIn("dashboard", compiled.compiled_prompt.lower())
         self.assertNotIn("user interface explains", compiled.compiled_prompt.lower())
         self.assertEqual(compiled.director_prompt, director)
-        self.assertEqual(compiled.compiler_version, "visual-compiler-v4")
+        self.assertEqual(compiled.compiler_version, "visual-compiler-v5")
         negative_tokens = [part.strip() for part in compiled.negative_prompt.split(",")]
         self.assertEqual(len(negative_tokens), len(set(negative_tokens)))
         self.assertIn("screens", negative_tokens)
         self.assertIn("text", negative_tokens)
+
+    def test_marked_factual_visual_outranks_long_generic_treatment(self):
+        director = (
+            "Factual visual: Research Transformation; A scientist using AI to analyze genetic data; "
+            "AI accelerates genomics discoveries; composition grammar directional mechanism. "
+            "Show a directional cause-to-result mechanism as a tangible pathway, handoff, "
+            "laboratory process, or sequence of connected physical stages with extensive detail."
+        )
+        compiled = compile_image_prompt(director)
+
+        self.assertIn("genetic data", compiled.compiled_prompt.lower())
+        self.assertIn("genomics discoveries", compiled.compiled_prompt.lower())
+        self.assertNotIn("factual visual", compiled.compiled_prompt.lower())
+        self.assertNotIn("sequence of connected physical stages", compiled.compiled_prompt.lower())
 
     def test_caption_safe_suffix_survives_an_extremely_long_director_prompt(self):
         director = " ".join(

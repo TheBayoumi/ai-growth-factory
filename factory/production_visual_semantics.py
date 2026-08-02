@@ -114,9 +114,9 @@ def _scene_specific_repair(plan: Any, package: Any) -> Any:
         )
         unique_grammar = _INDEX_FALLBACKS[index % len(_INDEX_FALLBACKS)]
         image_prompt = (
-            f"Depict {source_scene.heading}. {source_scene.visual}. "
-            f"The factual consequence is: {source_scene.body}. "
-            f"Use the unique composition grammar of {unique_grammar}. {image_treatment} "
+            f"Factual visual: {source_scene.heading}; {source_scene.visual}; "
+            f"{source_scene.body}; composition grammar {unique_grammar}. "
+            f"{image_treatment} "
             "Keep all generated media free of written text, labels, logos, and watermarks. "
             "Place the primary subject in the upper two-thirds and keep the lower third visually quiet for separate captions."
         )
