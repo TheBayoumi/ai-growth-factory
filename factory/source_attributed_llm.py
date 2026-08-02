@@ -247,8 +247,10 @@ def _strict_scene_indices(
     source_urls: list[str],
     sources: list[SourceItem],
 ) -> list[int]:
-    """Preserve integer mappings exactly; never infer one-based or catalog indices."""
-    del source_urls, sources
+    """Preserve valid integer mappings exactly and reject every invalid position."""
+    del sources
+    if not source_urls:
+        raise local_llm.LocalLLMError("Scene attribution requires selected source URLs")
     indices: list[int] = []
     for scene in scenes_raw:
         if not isinstance(scene, dict) or "source_index" not in scene:
@@ -261,11 +263,17 @@ def _strict_scene_indices(
                 "Every scene requires an integer source_index"
             )
         try:
-            indices.append(int(value))
+            index = int(value)
         except (TypeError, ValueError) as exc:
             raise local_llm.LocalLLMError(
                 "Every scene requires an integer source_index"
             ) from exc
+        if not 0 <= index < len(source_urls):
+            raise local_llm.LocalLLMError(
+                f"Scene source_index out of range: {index}; valid zero-based "
+                f"source_urls range is 0-{len(source_urls) - 1}"
+            )
+        indices.append(index)
     return indices
 
 
