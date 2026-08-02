@@ -10,7 +10,7 @@ from .feeds import SourceItem
 from .trend_sources import TrendSnapshot
 
 
-_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+#-]{1,40}")
+_TOKEN_RE = re.compile(r"[a-z0-9]{2,40}")
 _STOP = {
     "about",
     "after",
