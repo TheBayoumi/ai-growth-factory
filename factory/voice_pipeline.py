@@ -14,6 +14,7 @@ from .audio_qc import (
     normalize_audio,
     split_narration,
     tempo_correction_factor,
+    wav_duration,
     write_manifest,
 )
 from .config import Settings
@@ -118,6 +119,67 @@ def _retime_segments(
     ]
 
 
+def _pace_correct_segment_assets(
+    segments: list[NarrationSegment],
+    *,
+    workdir: Path,
+    pipeline_attempt: int,
+    contract: VoiceContract,
+    settings: Settings,
+) -> tuple[list[NarrationSegment], list[dict[str, object]]]:
+    """Correct generated segment assets before concatenation and model review.
+
+    The previous implementation corrected only the assembled track. Qwen Omni then
+    reviewed the original slow segment files and requested unnecessary TTS retries. This
+    routine makes the segment assets, reviewer inputs, selective-retry state, and final
+    composition use the same pitch-preserving paced audio.
+    """
+    corrected: list[NarrationSegment] = []
+    events: list[dict[str, object]] = []
+    for segment in segments:
+        duration = wav_duration(segment.audio_path)
+        before_wpm = len(segment.text.split()) / max(duration, 0.001) * 60.0
+        factor = tempo_correction_factor(
+            estimated_wpm=before_wpm,
+            target_wpm=contract.target_wpm,
+            tolerance=settings.audio_wpm_tolerance,
+        )
+        if factor is None:
+            corrected.append(segment)
+            continue
+
+        paced = workdir / "segments" / (
+            f"segment-{segment.segment_id:02d}-attempt-{segment.attempt}-paced-{pipeline_attempt}.wav"
+        )
+        correct_audio_tempo(segment.audio_path, paced, factor=factor)
+        normalized = workdir / "segments" / (
+            f"segment-{segment.segment_id:02d}-attempt-{segment.attempt}-paced-normalized-"
+            f"{pipeline_attempt}.wav"
+        )
+        normalize_audio(
+            paced,
+            normalized,
+            target_lufs=settings.audio_target_lufs,
+            peak_dbfs=settings.audio_peak_limit_dbfs,
+        )
+        after_duration = wav_duration(normalized)
+        after_wpm = len(segment.text.split()) / max(after_duration, 0.001) * 60.0
+        updated = replace(segment, audio_path=normalized)
+        corrected.append(updated)
+        events.append(
+            {
+                "attempt": pipeline_attempt,
+                "type": "deterministic_segment_tempo_correction",
+                "segment_id": segment.segment_id,
+                "factor": round(factor, 6),
+                "before_wpm": round(before_wpm, 3),
+                "after_wpm": round(after_wpm, 3),
+                "audio_path": str(normalized),
+            }
+        )
+    return corrected, events
+
+
 def _unload(provider: object | None) -> None:
     if provider is None:
         return
@@ -190,6 +252,15 @@ def build_reviewed_narration(
     final_audio = workdir / "voice.wav"
 
     for attempt in range(1, settings.reviewer_max_attempts + 1):
+        segments, segment_pacing = _pace_correct_segment_assets(
+            segments,
+            workdir=workdir,
+            pipeline_attempt=attempt,
+            contract=contract,
+            settings=settings,
+        )
+        review_history.extend(segment_pacing)
+
         raw_audio = workdir / f"voice-raw-attempt-{attempt}.wav"
         raw_audio, timed_segments = concatenate_segments(
             segments,
@@ -233,7 +304,7 @@ def build_reviewed_narration(
                 review_history.append(
                     {
                         "attempt": attempt,
-                        "type": "deterministic_tempo_correction",
+                        "type": "deterministic_track_tempo_correction",
                         "factor": round(factor, 6),
                         "before_wpm": round(metrics.estimated_wpm, 3),
                         "after_wpm": round(corrected_metrics.estimated_wpm, 3),
@@ -352,9 +423,6 @@ def build_reviewed_narration(
             break
         failures_by_id = {failure.segment_id: failure for failure in review.failed_segments}
         if not failures_by_id:
-            # Reviewer output can say "approve" while still missing locally enforced score
-            # thresholds. Treat that contradiction as a retry of all segments rather than
-            # publishing weak audio or crashing without a repair path.
             repair = _threshold_repair(review)
             failures_by_id = {
                 segment.segment_id: FailedSegment(

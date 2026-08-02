@@ -30,6 +30,29 @@ class ProductionReviewerFeedbackTests(unittest.TestCase):
         self.assertEqual(result["decision"], "retry")
         self.assertEqual(result["overall_score"], 0.79)
 
+    def test_schema_placeholder_is_replaced_by_scored_instruction(self):
+        result = normalize_retry_feedback(
+            {
+                "decision": "retry",
+                "scores": {
+                    "script_fidelity": 0.98,
+                    "naturalness": 0.54,
+                    "authority": 0.90,
+                    "engagement": 0.62,
+                    "pronunciation": 0.91,
+                    "pace": 0.88,
+                    "pause_quality": 0.90,
+                    "emotional_match": 0.85,
+                    "audio_artifacts": 0.95,
+                },
+                "reason": "The delivery needs more naturalness.",
+                "tts_instruction": "standalone Qwen3-TTS repair instruction, or empty when approved",
+            }
+        )
+        self.assertEqual(result["reason"], "The delivery needs more naturalness.")
+        self.assertIn("natural human phrasing", result["tts_instruction"])
+        self.assertNotIn("standalone", result["tts_instruction"])
+
     def test_existing_actionable_feedback_is_preserved(self):
         original = {
             "decision": "retry",

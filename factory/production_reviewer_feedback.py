@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -15,21 +16,36 @@ _REPAIR_INSTRUCTIONS = {
     "emotional_match": "Match the requested energy and warmth while remaining factual and non-sensational.",
     "audio_artifacts": "Regenerate clean audio with no noise, clicks, distortion, metallic resonance, or boundary artifacts.",
 }
+_PLACEHOLDER_PATTERNS = (
+    re.compile(r"standalone\s+qwen3[- ]tts\s+repair\s+instruction", re.IGNORECASE),
+    re.compile(r"specific\s+audible\s+defect", re.IGNORECASE),
+    re.compile(r"or\s+empty\s+when\s+approved", re.IGNORECASE),
+    re.compile(r"insert\s+(?:a\s+)?(?:reason|instruction)\s+here", re.IGNORECASE),
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    clean = " ".join(value.split()).strip()
+    if not clean:
+        return True
+    return any(pattern.search(clean) for pattern in _PLACEHOLDER_PATTERNS)
 
 
 def normalize_retry_feedback(data: dict[str, Any]) -> dict[str, Any]:
-    """Complete an otherwise valid Qwen retry decision using its returned scores.
+    """Complete incomplete or schema-echoed Qwen retry feedback from its scores.
 
-    The model still decides whether the segment needs retry. This function only fills
-    missing diagnostic text from the score vector so the existing bounded selective
-    repair loop has an actionable instruction. It never changes approve/reject decisions,
-    score values, segment IDs, or the maximum number of attempts.
+    The model still decides whether the segment needs retry. This function only replaces
+    missing fields or literal schema placeholders with an actionable instruction derived
+    from the returned score vector. It never changes decisions, scores, segment IDs, or
+    the bounded attempt count.
     """
     if str(data.get("decision") or "").strip().lower() != "retry":
         return data
     reason = str(data.get("reason") or "").strip()
     instruction = str(data.get("tts_instruction") or "").strip()
-    if reason and instruction:
+    reason_missing = _is_placeholder(reason)
+    instruction_missing = _is_placeholder(instruction)
+    if not reason_missing and not instruction_missing:
         return data
 
     raw_scores = data.get("scores")
@@ -44,11 +60,13 @@ def normalize_retry_feedback(data: dict[str, Any]) -> dict[str, Any]:
     lowest_value, lowest_field = min(candidates, default=(0.0, "script_fidelity"))
 
     corrected = dict(data)
-    corrected["reason"] = reason or (
-        "Reviewer requested a segment retry; the lowest returned quality score was "
-        f"{lowest_field} at {lowest_value:.2f}."
-    )
-    corrected["tts_instruction"] = instruction or _REPAIR_INSTRUCTIONS[lowest_field]
+    if reason_missing:
+        corrected["reason"] = (
+            "Reviewer requested a segment retry; the lowest returned quality score was "
+            f"{lowest_field} at {lowest_value:.2f}."
+        )
+    if instruction_missing:
+        corrected["tts_instruction"] = _REPAIR_INSTRUCTIONS[lowest_field]
     return corrected
 
 
