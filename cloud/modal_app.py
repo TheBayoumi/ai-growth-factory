@@ -70,7 +70,7 @@ worker_image = (
             "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
             "assert imageio_ffmpeg.get_ffmpeg_exe(); "
-            "print('Voice, reviewer, image, imageio export, and Wan2.2 runtime preflight passed')\""
+            "print('Voice, reviewer, image, and Wan2.2 visual runtime import preflight passed; imageio export available')\""
         ),
         "fc-cache -f -v >/dev/null",
     )
