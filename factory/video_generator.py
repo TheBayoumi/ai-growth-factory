@@ -57,30 +57,64 @@ def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, Keyfra
 
 
 class Wan22Animator:
-    """Invoke the official Wan2.2 TI2V-5B reference implementation.
-
-    The official project supports 704x1280 TI2V generation on a 24 GB GPU with
-    model offloading, dtype conversion, and the T5 encoder on CPU. This wrapper
-    intentionally uses that reference CLI instead of an unverified custom port.
-    """
+    """Invoke the official Wan2.2 TI2V-5B reference implementation."""
 
     def __init__(self, plan: VisualPlan) -> None:
         self.plan = plan
         self.repo = Path(os.getenv("WAN22_REPO", "/opt/Wan2.2")).expanduser()
+        self.model_id = os.getenv("WAN22_MODEL_ID", "Wan-AI/Wan2.2-TI2V-5B").strip()
         self.checkpoint = Path(
             os.getenv(
                 "WAN22_CHECKPOINT_DIR",
                 "/cache/huggingface/Wan-AI/Wan2.2-TI2V-5B",
             )
         ).expanduser()
-        self.python = os.getenv("WAN22_PYTHON", "python").strip()
+        self.python = os.getenv("WAN22_PYTHON", "/opt/wan-venv/bin/python").strip()
         self.steps = int(os.getenv("WAN22_SAMPLE_STEPS", "30"))
         self.frame_num = int(os.getenv("WAN22_FRAME_NUM", "81"))
-        self.timeout_seconds = int(os.getenv("WAN22_TIMEOUT_SECONDS", "1800"))
+        self.timeout_seconds = int(os.getenv("WAN22_TIMEOUT_SECONDS", "2400"))
+        self.auto_download = _bool("WAN22_AUTO_DOWNLOAD", True)
         if self.frame_num < 17 or (self.frame_num - 1) % 4 != 0:
             raise VideoGenerationError("WAN22_FRAME_NUM must be 4n+1 and at least 17")
         if not 8 <= self.steps <= 60:
             raise VideoGenerationError("WAN22_SAMPLE_STEPS must be between 8 and 60")
+
+    def _checkpoint_ready(self) -> bool:
+        if not self.checkpoint.is_dir():
+            return False
+        expected = (
+            "models_t5_umt5-xxl-enc-bf16.pth",
+            "Wan2.2_VAE.pth",
+        )
+        return all((self.checkpoint / name).is_file() for name in expected)
+
+    def _download_checkpoint(self) -> None:
+        if not self.auto_download:
+            raise VideoGenerationError(
+                f"Wan2.2 checkpoint is missing at {self.checkpoint} and auto-download is disabled"
+            )
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise VideoGenerationError(
+                "huggingface_hub is required to download the Wan2.2 checkpoint"
+            ) from exc
+        self.checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            snapshot_download(
+                repo_id=self.model_id,
+                local_dir=self.checkpoint,
+                token=os.getenv("HF_TOKEN") or None,
+                resume_download=True,
+            )
+        except Exception as exc:
+            raise VideoGenerationError(
+                f"Could not download {self.model_id} to {self.checkpoint}: {exc}"
+            ) from exc
+        if not self._checkpoint_ready():
+            raise VideoGenerationError(
+                f"Wan2.2 download completed but required checkpoint files are missing at {self.checkpoint}"
+            )
 
     def _validate_runtime(self) -> None:
         generate_py = self.repo / "generate.py"
@@ -88,10 +122,10 @@ class Wan22Animator:
             raise VideoGenerationError(
                 f"Official Wan2.2 repository is missing at {self.repo}"
             )
-        if not self.checkpoint.is_dir():
-            raise VideoGenerationError(
-                f"Wan2.2 checkpoint is missing at {self.checkpoint}"
-            )
+        if not Path(self.python).is_file():
+            raise VideoGenerationError(f"Wan2.2 Python environment is missing: {self.python}")
+        if not self._checkpoint_ready():
+            self._download_checkpoint()
 
     def animate(
         self,
@@ -136,6 +170,7 @@ class Wan22Animator:
         ]
         env = dict(os.environ)
         env.setdefault("PYTHONUNBUFFERED", "1")
+        env.setdefault("HF_HOME", "/cache/huggingface")
         completed = subprocess.run(
             command,
             cwd=self.repo,
@@ -180,7 +215,7 @@ def generate_scene_media(
             path = output_dir / f"scene-{scene.scene_index:02d}-wan.mp4"
             animator.animate(scene, keyframe, path)
             media_type = "video"
-            model = plan.video_model
+            model = animator.model_id
             prompt = scene.motion_prompt
         elif scene.generation_mode == "image":
             path = keyframe.path
@@ -209,12 +244,13 @@ def generate_scene_media(
 
     manifest = {
         "video_backend": "wan22_ti2v_official",
-        "video_model": plan.video_model,
+        "video_model": animator.model_id,
         "frame_num": animator.frame_num,
         "sample_steps": animator.steps,
         "offload_model": True,
         "convert_model_dtype": True,
         "t5_cpu": True,
+        "checkpoint_path": str(animator.checkpoint),
         "assets": [asset.as_dict() for asset in assets],
     }
     (output_dir / "scene-media-manifest.json").write_text(
