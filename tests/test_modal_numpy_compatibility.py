@@ -17,16 +17,25 @@ class ModalNativeOmniCompatibilityTests(unittest.TestCase):
         self.assertNotIn("gptqmodel", self.source.lower())
         self.assertNotIn("optimum", self.source.lower())
 
-    def test_image_preflight_imports_real_tts_and_native_omni(self):
+    def test_image_preflight_imports_voice_reviewer_and_visual_models(self):
         self.assertIn("from qwen_tts import Qwen3TTSModel", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
-        self.assertIn("Qwen TTS and native Omni runtime import preflight passed", self.source)
+        self.assertIn("AutoencoderKLWan", self.source)
+        self.assertIn("WanImageToVideoPipeline", self.source)
+        self.assertIn("FluxPipeline", self.source)
+        self.assertIn("StableDiffusionXLPipeline", self.source)
+        self.assertIn(
+            "Voice, reviewer, image, and Wan2.2 visual runtime import preflight passed",
+            self.source,
+        )
 
     def test_production_resource_and_video_contract(self):
         self.assertIn('gpu="A10"', self.source)
-        self.assertIn("memory=24576", self.source)
+        self.assertIn("memory=65536", self.source)
+        self.assertIn("timeout=85 * 60", self.source)
         self.assertIn('"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B"', self.source)
+        self.assertIn('"WAN22_MODEL_ID": "Wan-AI/Wan2.2-TI2V-5B-Diffusers"', self.source)
         self.assertIn('"VIDEO_WIDTH": "1080"', self.source)
         self.assertIn('"VIDEO_HEIGHT": "1920"', self.source)
         self.assertIn('"VIDEO_FPS": "30"', self.source)

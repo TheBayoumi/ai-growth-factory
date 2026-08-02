@@ -24,7 +24,7 @@ class ProductionCopyGroundingTests(unittest.TestCase):
             "Teams can now test failures, retries, and confirmations against a concrete API contract. "
             "Evaluators also gain repeatable checkpoints for permission handling, malformed arguments, and delayed tool responses before a customer ever sees them. "
             "This is not just shaping the future; it creates a measurable workflow for production voice agents. "
-            "The practical question is whether latency and reliability hold under real customer traffic. "
+            "The practical question is whether latency and reliability hold. "
             "Early deployments should track successful calls, correction rates, and user confirmations instead of relying on polished demos alone. "
             "Follow for the next verified deployment result and the exact numbers that matter."
         )
