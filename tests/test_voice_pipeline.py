@@ -142,7 +142,7 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertEqual(result.attempts, 2)
         self.assertEqual(reviewer.calls, 2)
         self.assertEqual(len(tts.calls), 3)
-        self.assertEqual(tts.calls[0][0], tts.calls[2][0] if False else tts.calls[0][0])
+        self.assertNotEqual(tts.calls[0][0], tts.calls[2][0])
         self.assertEqual(tts.calls[1][0], tts.calls[2][0])
         self.assertIn("dynamic but natural pacing", tts.calls[2][1])
 
