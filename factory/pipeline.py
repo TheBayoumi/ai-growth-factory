@@ -13,6 +13,8 @@ from .feeds import fetch_diverse_recent, fetch_recent
 from .llm_runtime import managed_llama_server
 from .policy import reward, select_strategy
 from .source_attributed_llm import generate_package
+from .trend_ranking import TrendAlignment, align_primary_sources_to_trends
+from .trend_sources import TrendSnapshot, fetch_trend_snapshot
 from .video_qc import verify_video_output
 from .visual_pipeline import release_accelerator_memory, render_visual_plan
 from .visual_prompt import construct_visual_plan
@@ -27,6 +29,20 @@ def _persist_run_record(settings: Settings, record: dict[str, Any]) -> Path:
     output = settings.state_root / "runs" / f"{timestamp}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+    return output
+
+
+def _persist_trend_audit(
+    settings: Settings,
+    snapshot: TrendSnapshot,
+    alignment: TrendAlignment,
+) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = settings.state_root / "trend-audits" / f"{timestamp}.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = snapshot.as_dict()
+    payload["alignment"] = alignment.as_dict()
+    output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return output
 
 
@@ -97,17 +113,23 @@ def run_factory(settings: Settings) -> dict[str, Any]:
         min_publishers=settings.min_primary_sources,
         fetcher=fetch_recent,
     )
-    sources = list(selection.items)
     if selection.publisher_count < settings.min_primary_sources:
         result = {
             "status": "evidence_skip",
             "reason": "Not enough fresh primary-source publishers",
-            "source_count": len(sources),
+            "source_count": len(selection.items),
             "publisher_count": selection.publisher_count,
             "source_max_age_hours": selection.max_age_hours,
         }
         _persist_run_record(settings, result)
         return result
+
+    trend_snapshot = fetch_trend_snapshot(
+        max_age_hours=min(settings.max_source_age_hours, 72),
+    )
+    trend_alignment = align_primary_sources_to_trends(selection.items, trend_snapshot)
+    sources = list(trend_alignment.ranked_sources or selection.items)
+    trend_audit = _persist_trend_audit(settings, trend_snapshot, trend_alignment)
 
     seed_material = f"{today}|{context.channel_id}|{len(mature)}"
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
@@ -125,6 +147,7 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             "status": "evidence_skip",
             "reason": "Generated package did not use enough independent primary publishers",
             "source_max_age_hours": selection.max_age_hours,
+            "trend_audit": str(trend_audit),
         }
         _persist_run_record(settings, result)
         return result
@@ -185,6 +208,12 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             "source_urls": package.source_urls,
             "source_max_age_hours": selection.max_age_hours,
             "mature_observations": len(mature),
+            "trends": {
+                "signal_count": len(trend_snapshot.items),
+                "provider_status": dict(trend_snapshot.provider_status),
+                "matched_primary_count": len(trend_alignment.matches),
+                "audit_path": str(trend_audit),
+            },
             "voice": {
                 "generator": settings.qwen_tts_model,
                 "reviewer": settings.reviewer_model if settings.reviewer_required else None,
@@ -217,6 +246,7 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             "error_type": type(exc).__name__,
             "error": str(exc),
             "workdir": str(workdir),
+            "trend_audit": str(trend_audit),
         }
         try:
             failure["visual_audit"] = str(_persist_visual_audit(settings, workdir))
