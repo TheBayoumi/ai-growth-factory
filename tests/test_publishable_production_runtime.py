@@ -47,7 +47,8 @@ class PublishableProductionRuntimeTests(unittest.TestCase):
         self.assertIn("voice_pipeline.tempo_correction_factor", pacing)
         self.assertIn("_pace_correct_segment_assets", pipeline)
         self.assertIn("deterministic_segment_tempo_correction", pipeline)
-        self.assertIn("already-compliant segments", pacing)
+        self.assertIn("if factor is None:", pipeline)
+        self.assertIn("corrected.append(segment)", pipeline)
 
 
 if __name__ == "__main__":
