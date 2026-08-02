@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from .feeds import SourceItem
-from .models import Scene, VideoPackage
+from .models import VideoPackage
 
 
 _INSTALLED = False
@@ -40,6 +40,31 @@ _BANNED_PHRASES = (
     "more effective, ethical, and accessible",
     "scientific research and workforce readiness",
 )
+_MALFORMED_COPY_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\brechanging\b", "corrupted word 'rechanging'"),
+    (r"\bis used of\b", "corrupted phrase 'is used of'"),
+    (r"\bthe\s+the\b", "duplicated article"),
+    (r"\bof\s+of\b", "duplicated preposition"),
+    (r"\bhow\s+[^.!?]{0,120}\s+is\s+used\s+of\b", "malformed replacement clause"),
+)
+_RELATIONSHIP_PATTERNS: tuple[tuple[str, str], ...] = (
+    (r"\bcollaboration\s+between\b", "collaboration between"),
+    (r"\bpartnership\s+between\b", "partnership between"),
+    (r"\bjointly\s+(?:developed|released|built|created)\b", "joint development"),
+    (r"\bco-developed\b", "co-development"),
+    (r"\bworked\s+together\b", "worked together"),
+    (r"\bin\s+partnership\s+with\b", "partnership"),
+)
+_RELATIONSHIP_EVIDENCE_TERMS = (
+    "collaboration",
+    "collaborat",
+    "partnership",
+    "partnered",
+    "jointly",
+    "co-developed",
+    "worked together",
+    "in partnership with",
+)
 _RULES = """
 PRODUCTION EDITORIAL RULES:
 - Tell ONE coherent, current story. One source may be the main evidence and another may add directly relevant context; never splice unrelated announcements into a broad trend.
@@ -47,6 +72,7 @@ PRODUCTION EDITORIAL RULES:
 - Open with the specific change and its consequence in the first 12 words. Do not begin with a generic industry overview.
 - Narration must be 130-155 words so the finished vertical video lands near 55-62 seconds at short-form pace.
 - Avoid generic filler such as “AI advancements,” “leading advancements,” “shaping the future,” and “more effective, ethical, and accessible.”
+- Never describe selected publishers as collaborating, partnering, jointly developing, or confirming one another unless a supplied source explicitly states that relationship.
 - Every scene must add a distinct fact or implication. Do not repeat the same conclusion in different wording.
 - Thumbnail text must name the concrete subject in 2-5 words.
 - Return zero-based source_index values only: with N source_urls, valid values are 0 through N-1.
@@ -79,33 +105,37 @@ def _short_subject(source: SourceItem) -> str:
 
 
 def _replace_phrase(text: str, phrase: str, replacement: str) -> str:
-    return re.sub(re.escape(phrase), replacement, text, flags=re.IGNORECASE)
+    """Replace a complete phrase only, never a substring inside another word."""
+    pattern = rf"(?<![\w-]){re.escape(phrase)}(?![\w-])"
+    return re.sub(pattern, replacement, text, flags=re.IGNORECASE)
 
 
 def _ground_generic_copy(
     package: VideoPackage,
     sources: list[SourceItem],
 ) -> VideoPackage:
-    """Replace generic slogans with the concrete, already-validated source subject."""
+    """Replace generic slogans with grammatical, source-grounded language."""
     selected = _selected_sources(package, sources)
     if not selected:
         return package
     primary = selected[0]
     subject = _short_subject(primary)
     publisher = primary.publisher.strip()
-    replacements = {
-        "ai advancements": subject,
-        "advancements in ai": subject,
-        "future of ai": subject,
-        "shaping the future": f"changing how {subject} is used",
-        "leading advancements": f"new work on {subject}",
-        "more effective, ethical, and accessible": "more measurable and easier to evaluate",
-        "scientific research and workforce readiness": subject,
-    }
+    replacements: tuple[tuple[str, str], ...] = (
+        ("reshaping the future of work", "changing how people work"),
+        ("shaping the future of work", "changing how people work"),
+        ("scientific research and workforce readiness", subject),
+        ("more effective, ethical, and accessible", "more measurable and easier to evaluate"),
+        ("leading advancements", f"new work on {subject}"),
+        ("advancements in ai", subject),
+        ("ai advancements", subject),
+        ("future of ai", f"practical impact of {subject}"),
+        ("shaping the future", "changing current practice"),
+    )
 
     def edit(text: str) -> str:
         edited = text
-        for phrase, replacement in replacements.items():
+        for phrase, replacement in replacements:
             edited = _replace_phrase(edited, phrase, replacement)
         return " ".join(edited.split())
 
@@ -149,12 +179,57 @@ def _ground_generic_copy(
     )
 
 
+def _validate_copy_integrity(package: VideoPackage) -> None:
+    from .local_llm import LocalLLMError
+
+    combined = " ".join(
+        (
+            package.topic,
+            package.title,
+            package.narration,
+            package.description,
+            package.thumbnail_text,
+            package.top_comment,
+            *(scene.heading for scene in package.scenes),
+            *(scene.body for scene in package.scenes),
+        )
+    )
+    for pattern, description in _MALFORMED_COPY_PATTERNS:
+        if re.search(pattern, combined, flags=re.IGNORECASE):
+            raise LocalLLMError(f"Production copy contains {description}")
+
+
+def _validate_source_relationships(
+    package: VideoPackage,
+    selected: list[SourceItem],
+) -> None:
+    """Reject invented relationships between otherwise independent publishers."""
+    from .local_llm import LocalLLMError
+
+    copy = f"{package.title} {package.narration}".casefold()
+    evidence = " ".join(
+        f"{source.publisher} {source.title} {source.summary}" for source in selected
+    ).casefold()
+    evidence_declares_relationship = any(
+        term in evidence for term in _RELATIONSHIP_EVIDENCE_TERMS
+    )
+    if evidence_declares_relationship:
+        return
+    for pattern, label in _RELATIONSHIP_PATTERNS:
+        if re.search(pattern, copy, flags=re.IGNORECASE):
+            raise LocalLLMError(
+                "Production narration invents an unsupported cross-source relationship: "
+                + label
+            )
+
+
 def _validate_publishable_content(
     package: VideoPackage,
     sources: list[SourceItem],
 ) -> None:
     from .local_llm import LocalLLMError
 
+    _validate_copy_integrity(package)
     title_lower = package.title.casefold()
     narration_lower = package.narration.casefold()
     for phrase in _BANNED_PHRASES:
@@ -178,6 +253,8 @@ def _validate_publishable_content(
         source_specific.update(_tokens(source.publisher))
     if not source_specific:
         raise LocalLLMError("Selected sources contain no concrete title or publisher terms")
+
+    _validate_source_relationships(package, selected)
 
     first_sentence = re.split(r"(?<=[.!?])\s+", package.narration.strip(), maxsplit=1)[0]
     if not (_tokens(package.title) & source_specific):
