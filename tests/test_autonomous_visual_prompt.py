@@ -83,7 +83,7 @@ class AutonomousVisualPromptTests(unittest.TestCase):
 
     def test_visual_plan_rejects_source_reassignment(self):
         raw = self._raw_plan()
-        raw["scenes"][2]["source_index"] = 0
+        raw["scenes"][2]["source_index"] = 1
         with self.assertRaisesRegex(VisualPromptError, "source_index changed"):
             _validate_and_normalize(
                 raw,
