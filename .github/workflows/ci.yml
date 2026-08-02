@@ -49,7 +49,7 @@ jobs:
       github.event.pull_request.merged == true &&
       startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: modal-production
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -84,6 +84,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . "modal==1.5.3"
           python -m compileall -q factory api cloud
+          python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
+          python -c "from factory.visual_prompt import construct_visual_plan; from factory.caption_renderer import write_animated_caption_track; from factory.visual_pipeline import render_visual_plan; print('Autonomous visual pipeline import preflight passed')"
           python scripts/repository_preflight.py
 
       - name: Verify Modal credential pair
@@ -169,7 +171,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
-            failure=$(find production-video -name canary-failure.json -type f -print -quit)
+            failure=$(find production-video -name canary-failure.json -type f -print -quit 2>/dev/null || true)
             if [ -n "${failure}" ]; then
               cat "${failure}"
             fi
@@ -195,10 +197,26 @@ jobs:
               "voice-review-manifest.json",
               "video-qc-report.json",
               "package.json",
+              "visual-plan.json",
+              "keyframe-manifest.json",
+              "scene-media-manifest.json",
+              "animated-captions.ass",
+              "animated-captions.json",
+              "visual-composition-manifest.json",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
               raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
+          keyframes = sorted((root / "visual-keyframes").glob("scene-*-keyframe.png"))
+          if len(keyframes) != 6:
+              raise SystemExit(f"Expected six generated keyframes, received {len(keyframes)}")
+          visuals = result.get("visuals") or {}
+          if visuals.get("wan_scene_count") != 3:
+              raise SystemExit(f"Expected three Wan hero scenes: {visuals}")
+          if visuals.get("captions_baked_into_generated_media") is not False:
+              raise SystemExit("Generated media must be text-free; captions belong to the ASS layer")
+          if visuals.get("caption_rendering") != "separate_animated_ass_layer":
+              raise SystemExit(f"Animated caption contract is missing: {visuals}")
           video_qc = result.get("video_qc") or {}
           if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
               raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
