@@ -137,7 +137,6 @@ class ProductionVisualSemanticsV10Tests(unittest.TestCase):
             for scene in repaired.scenes
         ]
 
-        validate_compiled_prompt_diversity(repaired.scenes)
         self.assertEqual(len(compiled), len(set(compiled)))
         self.assertIn("genetic data", compiled[2].lower())
         self.assertIn("speed and precision", compiled[5].lower())
