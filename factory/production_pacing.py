@@ -4,11 +4,17 @@ from typing import Any
 
 
 _INSTALLED = False
-_MAX_PRODUCTION_TEMPO = 1.35
+_MAX_PRODUCTION_TEMPO = 1.45
 
 
 def install_production_pacing() -> None:
-    """Allow pitch-preserving tempo correction to reach short-form pace."""
+    """Allow bounded pitch-preserving correction to reach short-form pace.
+
+    Qwen3-TTS can produce otherwise clean narration well below the requested pace.
+    Production permits a larger, still bounded correction only when the projected pace
+    lands inside the existing WPM gate. The voice pipeline applies this to segment assets
+    before review so Omni hears the same paced audio that will be composed.
+    """
     global _INSTALLED
     if _INSTALLED:
         return
