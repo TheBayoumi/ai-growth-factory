@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from .image_generator import KeyframeAsset
 from .visual_prompt import SceneVisualPrompt, VisualPlan
@@ -42,13 +43,6 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, KeyframeAsset]:
     result = {asset.scene_index: asset for asset in keyframes}
     if len(result) != len(keyframes):
@@ -56,76 +50,60 @@ def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, Keyfra
     return result
 
 
-class Wan22Animator:
-    """Invoke the official Wan2.2 TI2V-5B reference implementation."""
+class Wan22DiffusersAnimator:
+    """Generate hero clips with the official Wan2.2 TI2V-5B Diffusers checkpoint."""
 
     def __init__(self, plan: VisualPlan) -> None:
         self.plan = plan
-        self.repo = Path(os.getenv("WAN22_REPO", "/opt/Wan2.2")).expanduser()
-        self.model_id = os.getenv("WAN22_MODEL_ID", "Wan-AI/Wan2.2-TI2V-5B").strip()
-        self.checkpoint = Path(
-            os.getenv(
-                "WAN22_CHECKPOINT_DIR",
-                "/cache/huggingface/Wan-AI/Wan2.2-TI2V-5B",
-            )
-        ).expanduser()
-        self.python = os.getenv("WAN22_PYTHON", "/opt/wan-venv/bin/python").strip()
+        self.model_id = os.getenv(
+            "WAN22_MODEL_ID",
+            "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+        ).strip()
         self.steps = int(os.getenv("WAN22_SAMPLE_STEPS", "30"))
         self.frame_num = int(os.getenv("WAN22_FRAME_NUM", "81"))
-        self.timeout_seconds = int(os.getenv("WAN22_TIMEOUT_SECONDS", "2400"))
-        self.auto_download = _bool("WAN22_AUTO_DOWNLOAD", True)
+        self.guidance_scale = float(os.getenv("WAN22_GUIDANCE_SCALE", "5.0"))
         if self.frame_num < 17 or (self.frame_num - 1) % 4 != 0:
             raise VideoGenerationError("WAN22_FRAME_NUM must be 4n+1 and at least 17")
         if not 8 <= self.steps <= 60:
             raise VideoGenerationError("WAN22_SAMPLE_STEPS must be between 8 and 60")
+        if not 1.0 <= self.guidance_scale <= 12.0:
+            raise VideoGenerationError("WAN22_GUIDANCE_SCALE must be between 1 and 12")
+        self._pipeline: Any = None
 
-    def _checkpoint_ready(self) -> bool:
-        if not self.checkpoint.is_dir():
-            return False
-        expected = (
-            "models_t5_umt5-xxl-enc-bf16.pth",
-            "Wan2.2_VAE.pth",
-        )
-        return all((self.checkpoint / name).is_file() for name in expected)
-
-    def _download_checkpoint(self) -> None:
-        if not self.auto_download:
-            raise VideoGenerationError(
-                f"Wan2.2 checkpoint is missing at {self.checkpoint} and auto-download is disabled"
-            )
+    def _load(self) -> Any:
+        if self._pipeline is not None:
+            return self._pipeline
         try:
-            from huggingface_hub import snapshot_download
+            import torch
+            from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
         except ImportError as exc:
             raise VideoGenerationError(
-                "huggingface_hub is required to download the Wan2.2 checkpoint"
+                "Wan2.2 Diffusers dependencies are missing from the visual worker"
             ) from exc
-        self.checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        token = os.getenv("HF_TOKEN") or None
         try:
-            snapshot_download(
-                repo_id=self.model_id,
-                local_dir=self.checkpoint,
-                token=os.getenv("HF_TOKEN") or None,
-                resume_download=True,
+            vae = AutoencoderKLWan.from_pretrained(
+                self.model_id,
+                subfolder="vae",
+                torch_dtype=torch.float32,
+                token=token,
             )
+            pipeline = WanImageToVideoPipeline.from_pretrained(
+                self.model_id,
+                vae=vae,
+                torch_dtype=torch.bfloat16,
+                token=token,
+            )
+            pipeline.enable_model_cpu_offload()
+            if hasattr(pipeline.vae, "enable_tiling"):
+                pipeline.vae.enable_tiling()
+            if hasattr(pipeline.vae, "enable_slicing"):
+                pipeline.vae.enable_slicing()
+            pipeline.set_progress_bar_config(disable=True)
         except Exception as exc:
-            raise VideoGenerationError(
-                f"Could not download {self.model_id} to {self.checkpoint}: {exc}"
-            ) from exc
-        if not self._checkpoint_ready():
-            raise VideoGenerationError(
-                f"Wan2.2 download completed but required checkpoint files are missing at {self.checkpoint}"
-            )
-
-    def _validate_runtime(self) -> None:
-        generate_py = self.repo / "generate.py"
-        if not generate_py.is_file():
-            raise VideoGenerationError(
-                f"Official Wan2.2 repository is missing at {self.repo}"
-            )
-        if not Path(self.python).is_file():
-            raise VideoGenerationError(f"Wan2.2 Python environment is missing: {self.python}")
-        if not self._checkpoint_ready():
-            self._download_checkpoint()
+            raise VideoGenerationError(f"Could not load {self.model_id}: {exc}") from exc
+        self._pipeline = pipeline
+        return pipeline
 
     def animate(
         self,
@@ -133,62 +111,42 @@ class Wan22Animator:
         keyframe: KeyframeAsset,
         output: Path,
     ) -> Path:
-        self._validate_runtime()
-        output.parent.mkdir(parents=True, exist_ok=True)
+        pipeline = self._load()
+        try:
+            import torch
+            from diffusers.utils import export_to_video
+        except ImportError as exc:
+            raise VideoGenerationError("Wan2.2 export dependencies are missing") from exc
+
+        with Image.open(keyframe.path) as source:
+            image = source.convert("RGB").resize(
+                (self.plan.width, self.plan.height),
+                Image.Resampling.LANCZOS,
+            )
+        generator = torch.Generator(device="cpu").manual_seed(scene.seed)
         prompt = (
             scene.motion_prompt
-            + " Visual content and composition must remain faithful to this initial keyframe: "
+            + " Maintain this source-grounded visual design: "
             + scene.image_prompt
-            + " Avoid: "
-            + scene.negative_prompt
         )
-        command = [
-            self.python,
-            str(self.repo / "generate.py"),
-            "--task",
-            "ti2v-5B",
-            "--size",
-            "704*1280",
-            "--ckpt_dir",
-            str(self.checkpoint),
-            "--offload_model",
-            "True",
-            "--convert_model_dtype",
-            "--t5_cpu",
-            "--image",
-            str(keyframe.path),
-            "--prompt",
-            prompt,
-            "--frame_num",
-            str(self.frame_num),
-            "--sample_steps",
-            str(self.steps),
-            "--base_seed",
-            str(scene.seed),
-            "--save_file",
-            str(output),
-        ]
-        env = dict(os.environ)
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        env.setdefault("HF_HOME", "/cache/huggingface")
-        completed = subprocess.run(
-            command,
-            cwd=self.repo,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=self.timeout_seconds,
-            check=False,
-        )
-        log_path = output.with_suffix(".wan.log")
-        log_path.write_text(
-            completed.stdout + "\n--- STDERR ---\n" + completed.stderr,
-            encoding="utf-8",
-        )
-        if completed.returncode != 0:
+        try:
+            frames = pipeline(
+                image=image,
+                prompt=prompt,
+                negative_prompt=scene.negative_prompt,
+                height=self.plan.height,
+                width=self.plan.width,
+                num_frames=self.frame_num,
+                num_inference_steps=self.steps,
+                guidance_scale=self.guidance_scale,
+                generator=generator,
+            ).frames[0]
+            output.parent.mkdir(parents=True, exist_ok=True)
+            export_to_video(frames, str(output), fps=self.plan.fps)
+        except Exception as exc:
             raise VideoGenerationError(
-                f"Wan2.2 failed for scene {scene.scene_index}: {completed.stderr[-2200:]}"
-            )
+                f"Wan2.2 failed for scene {scene.scene_index}: {exc}"
+            ) from exc
         if not output.is_file() or output.stat().st_size < 250_000:
             raise VideoGenerationError(
                 f"Wan2.2 produced no usable clip for scene {scene.scene_index}"
@@ -204,7 +162,7 @@ def generate_scene_media(
     """Generate Wan clips for hero scenes and preserve keyframes for supporting scenes."""
     output_dir.mkdir(parents=True, exist_ok=True)
     keyframe_map = _keyframe_by_scene(keyframes)
-    animator = Wan22Animator(plan)
+    animator = Wan22DiffusersAnimator(plan)
     assets: list[SceneMediaAsset] = []
 
     for scene in plan.scenes:
@@ -243,14 +201,14 @@ def generate_scene_media(
         raise VideoGenerationError("Production visual plan must contain exactly three Wan clips")
 
     manifest = {
-        "video_backend": "wan22_ti2v_official",
+        "video_backend": "wan22_ti2v_diffusers",
         "video_model": animator.model_id,
         "frame_num": animator.frame_num,
         "sample_steps": animator.steps,
-        "offload_model": True,
-        "convert_model_dtype": True,
-        "t5_cpu": True,
-        "checkpoint_path": str(animator.checkpoint),
+        "guidance_scale": animator.guidance_scale,
+        "model_cpu_offload": True,
+        "vae_tiling": True,
+        "vae_slicing": True,
         "assets": [asset.as_dict() for asset in assets],
     }
     (output_dir / "scene-media-manifest.json").write_text(
