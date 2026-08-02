@@ -1,6 +1,9 @@
 import unittest
 from types import SimpleNamespace
 
+from factory.models import Scene, VideoPackage
+from factory.production_visual_semantics import _scene_specific_repair
+from factory.visual_prompt import SceneVisualPrompt, VisualPlan
 from factory.visual_prompt_compiler import (
     compile_image_prompt,
     compile_motion_prompt,
@@ -74,6 +77,73 @@ class ProductionVisualSemanticsV10Tests(unittest.TestCase):
             scene.role = "hook"
         with self.assertRaisesRegex(ValueError, "not semantically distinct"):
             validate_compiled_prompt_diversity(repeated)
+
+    def test_v10_scientist_collision_gets_deterministic_role_aware_repair(self):
+        package_scenes = (
+            Scene("Efficient AI Models", "GPT improves inference efficiency.", "A processor completing work quickly.", 0),
+            Scene("Evolving Knowledge", "Agents adapt through experience.", "A library reorganizing itself.", 1),
+            Scene("Research Transformation", "AI accelerates genomics discoveries.", "A scientist using AI to analyze genetic data.", 0),
+            Scene("Productivity Boost", "Researchers focus on innovation.", "Researchers collaborating in a laboratory.", 1),
+            Scene("Future of Research", "AI supports exploration and discovery.", "A wide experimental research environment.", 0),
+            Scene("Innovation Access", "Tools balance speed and precision.", "A scientist using an AI tool to analyze data.", 1),
+        )
+        package = VideoPackage(
+            topic="AI workflows",
+            narration="A sufficiently descriptive narration for testing visual repair behavior.",
+            title="AI Workflows Are Changing Research",
+            description="Description.",
+            tags=["AI", "research"],
+            thumbnail_text="RESEARCH CHANGED",
+            top_comment="What should be tested next?",
+            scenes=list(package_scenes),
+            source_urls=["https://example.com/a", "https://example.com/b"],
+            source_publishers=["A", "B"],
+        )
+        roles = ("hook", "evidence", "mechanism", "comparison", "implication", "cta")
+        prompts = tuple(
+            SceneVisualPrompt(
+                scene_index=index,
+                source_index=package_scenes[index].source_index,
+                role=roles[index],
+                generation_mode="wan_i2v" if index < 3 else "image",
+                image_prompt="A scientist using an AI tool to analyze data in a laboratory.",
+                motion_prompt="The scientist moves while data glows.",
+                negative_prompt="text, logo",
+                continuity_anchor="blue accent",
+                caption_safe_zone="lower third",
+                seed=100 + index,
+                duration_seconds=9.0,
+            )
+            for index in range(6)
+        )
+        plan = VisualPlan(
+            prompt_version="test",
+            global_style="editorial",
+            palette="blue and amber",
+            lighting="cinematic",
+            continuity_bible="secondary accent only",
+            image_model="image-model",
+            video_model="video-model",
+            width=704,
+            height=1280,
+            fps=30,
+            director_input_sha256="abc",
+            scenes=prompts,
+        )
+
+        repaired = _scene_specific_repair(plan, package)
+        compiled = [
+            compile_image_prompt(scene.image_prompt).compiled_prompt
+            for scene in repaired.scenes
+        ]
+
+        validate_compiled_prompt_diversity(repaired.scenes)
+        self.assertEqual(len(compiled), len(set(compiled)))
+        self.assertIn("genetic data", compiled[2].lower())
+        self.assertIn("speed and precision", compiled[5].lower())
+        self.assertIn("directional mechanism", repaired.scenes[2].image_prompt.lower())
+        self.assertIn("human-scale decision", repaired.scenes[5].image_prompt.lower())
+        self.assertNotEqual(repaired.scenes[2].motion_prompt, repaired.scenes[5].motion_prompt)
 
 
 if __name__ == "__main__":
