@@ -45,6 +45,7 @@ class ModalContractTests(unittest.TestCase):
             '"QWEN_TTS_DEVICE": "cuda:0"',
             '"QWEN_TTS_DTYPE": "float32"',
             '"QWEN_TTS_ATTENTION": "sdpa"',
+            '"MIN_PRIMARY_SOURCES": "1"',
             '"VISUAL_IMAGE_BACKEND": "auto"',
             '"WAN22_MODEL_ID": "Wan-AI/Wan2.2-TI2V-5B-Diffusers"',
             '"VIDEO_WIDTH": "1080"',
