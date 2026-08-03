@@ -12,7 +12,7 @@ _MIN_REPAIRABLE_WORDS = 80
 _TARGET_MIN_WORDS = 135
 _TARGET_MAX_WORDS = 155
 _SAFE_EXPANSIONS = (
-    "Before adopting it, open the linked primary sources, reproduce the claim on a controlled task, and compare the result with the current workflow.",
+    "Before adoption, read the linked source and test the claim on a controlled task.",
     "Track latency, failure rate, human corrections, and repeatability so the decision follows measured behavior rather than a polished announcement.",
     "The evidence should determine the next step, not the headline alone.",
     "Record the result before changing the production system.",
@@ -52,11 +52,12 @@ def _insert_before_closing(sentences: list[str], additions: list[str]) -> list[s
 def stabilize_production_narration(raw: dict[str, Any]) -> dict[str, Any]:
     """Bring a near-complete script into the production range without new claims.
 
-    The finalizer adds only evidence-evaluation guidance: read the linked sources,
-    reproduce the claim, record measurable behavior, and compare it with the current
-    workflow. It never adds product capabilities, dates, benchmarks, relationships,
-    pricing, or availability. Drafts below 80 words remain untouched and therefore fail
-    closed because too much substantive content would have to be invented.
+    The finalizer adds only evidence-evaluation guidance: read the linked source, test the
+    claim, record measurable behavior, and compare it with the current workflow. The first
+    repair sentence is deliberately short and clause-light so it remains natural when spoken
+    as the final narration segment. It never adds product capabilities, dates, benchmarks,
+    relationships, pricing, or availability. Drafts below 80 words remain untouched and
+    therefore fail closed because too much substantive content would have to be invented.
     """
     narration = str(raw.get("narration") or "").strip()
     count = _word_count(narration)
