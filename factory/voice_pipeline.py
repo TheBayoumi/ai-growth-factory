@@ -25,7 +25,16 @@ from .reviewer import OpenAIRealtimeReviewer, review_passes
 
 
 class VoiceGenerationError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        manifest_path: Path | None = None,
+        failed_segments: tuple[FailedSegment, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.manifest_path = manifest_path
+        self.failed_segments = failed_segments
 
 
 class TTSProvider(Protocol):
@@ -98,6 +107,33 @@ def _threshold_repair(review: AudioReview) -> str:
     if not corrections:
         corrections.append("Increase overall publication quality while preserving the exact transcript")
     return ". ".join(corrections) + "."
+
+
+def _segment_repair_instruction(failure: FailedSegment, retry_index: int) -> str:
+    requested = " ".join(failure.tts_instruction.split()).strip()
+    reason = " ".join(failure.reason.split()).strip()
+    if retry_index <= 1:
+        return requested
+    return (
+        "Regenerate this segment from scratch with a neutral, clean, authoritative delivery. "
+        "Do not imitate the previous take. Speak every supplied word exactly once, with no "
+        "omissions, additions, substitutions, paraphrasing, or repetitions. "
+        f"Correct this audible defect: {reason}. Apply this requested change: {requested}. "
+        "Use smooth human phrasing, clear technical pronunciation, short natural clause pauses, "
+        "and clean boundaries without clicks, metallic resonance, or synthetic strain."
+    )
+
+
+def _failed_segment_summary(review: AudioReview | None) -> str:
+    if review is None or not review.failed_segments:
+        return ""
+    return " | ".join(
+        (
+            f"segment {failure.segment_id}: {failure.reason}; "
+            f"repair={failure.tts_instruction}"
+        )
+        for failure in review.failed_segments
+    )
 
 
 def _pace_is_only_failure(metrics: AudioMetrics) -> bool:
@@ -246,6 +282,7 @@ def build_reviewed_narration(
         )
 
     review_history: list[dict[str, object]] = []
+    segment_retry_counts: dict[int, int] = {}
     final_review: AudioReview | None = None
     final_metrics: AudioMetrics | None = None
     final_segments: list[NarrationSegment] = []
@@ -419,9 +456,11 @@ def build_reviewed_narration(
                 segments=tuple(timed_segments),
                 voice_contract=contract,
             )
-        if review.decision == "reject" or attempt >= settings.reviewer_max_attempts:
+        if attempt >= settings.reviewer_max_attempts:
             break
         failures_by_id = {failure.segment_id: failure for failure in review.failed_segments}
+        if review.decision == "reject" and not failures_by_id:
+            break
         if not failures_by_id:
             repair = _threshold_repair(review)
             failures_by_id = {
@@ -443,14 +482,30 @@ def build_reviewed_narration(
             if failure is None:
                 repaired.append(segment)
                 continue
+            retry_index = segment_retry_counts.get(segment.segment_id, 0) + 1
+            segment_retry_counts[segment.segment_id] = retry_index
+            repair_instruction = _segment_repair_instruction(failure, retry_index)
             next_attempt = segment.attempt + 1
             instruction = contract.to_instruction(
                 segment_index=segment.segment_id,
                 segment_count=len(segments),
-                repair=failure.tts_instruction,
+                repair=repair_instruction,
             )
             output = workdir / "segments" / (
                 f"segment-{segment.segment_id:02d}-attempt-{next_attempt}.wav"
+            )
+            review_history.append(
+                {
+                    "attempt": attempt,
+                    "type": "selective_segment_repair",
+                    "segment_id": segment.segment_id,
+                    "retry_index": retry_index,
+                    "next_generation_attempt": next_attempt,
+                    "reviewer_reason": failure.reason,
+                    "reviewer_instruction": failure.tts_instruction,
+                    "effective_instruction": repair_instruction,
+                    "escalated": retry_index > 1,
+                }
             )
             tts_provider.generate(
                 text=segment.text,
@@ -482,12 +537,17 @@ def build_reviewed_narration(
         generator=generator_metadata,
         reviewer=reviewer_metadata,
     )
+    failed_details = _failed_segment_summary(final_review)
     reason = (
-        final_review.summary
-        if final_review is not None and final_review.summary
-        else "; ".join(final_metrics.failures) or "review thresholds were not met"
+        failed_details
+        or (final_review.summary if final_review is not None and final_review.summary else "")
+        or "; ".join(final_metrics.failures)
+        or "review thresholds were not met"
     )
+    failed_segments = final_review.failed_segments if final_review is not None else ()
     raise VoiceGenerationError(
         f"Narration failed closed after {settings.reviewer_max_attempts} attempts: {reason}. "
-        f"Manifest: {manifest}"
+        f"Manifest: {manifest}",
+        manifest_path=manifest,
+        failed_segments=failed_segments,
     )
