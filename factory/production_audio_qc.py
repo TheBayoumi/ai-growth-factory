@@ -14,6 +14,23 @@ def production_peak_target(peak_limit_dbfs: float) -> float:
     return peak_limit_dbfs - _PEAK_HEADROOM_DB
 
 
+def normalize_audio_with_headroom(
+    input_path: Path,
+    output_path: Path,
+    *,
+    target_lufs: float,
+    peak_dbfs: float,
+    normalizer: Callable[..., Path],
+) -> Path:
+    """Normalize against a conservative target to absorb single-pass loudnorm drift."""
+    return normalizer(
+        input_path,
+        output_path,
+        target_lufs=target_lufs,
+        peak_dbfs=production_peak_target(peak_dbfs),
+    )
+
+
 def deterministic_qc_failure(exc: Exception) -> Exception:
     """Prefer final deterministic QC evidence over stale reviewer feedback."""
     manifest_path = getattr(exc, "manifest_path", None)
@@ -59,11 +76,12 @@ def install_production_audio_qc() -> None:
         target_lufs: float,
         peak_dbfs: float,
     ) -> Path:
-        return original_normalize(
+        return normalize_audio_with_headroom(
             input_path,
             output_path,
             target_lufs=target_lufs,
-            peak_dbfs=production_peak_target(peak_dbfs),
+            peak_dbfs=peak_dbfs,
+            normalizer=original_normalize,
         )
 
     audio_qc.normalize_audio = normalize_with_headroom
