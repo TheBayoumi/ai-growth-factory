@@ -7,7 +7,7 @@ from .visual_prompt_compiler import CompiledVisualPrompt
 
 
 _INSTALLED = False
-_COMPILER_VERSION = "visual-compiler-v6-object-only"
+_COMPILER_VERSION = "visual-compiler-v7-coherent-objects"
 _SPACE_RE = re.compile(r"\s+")
 _FORBIDDEN_POSITIVE_RE = re.compile(
     r"\b(?:no|not|without|text|letter|number|symbol|caption|subtitle|logo|watermark|"
@@ -21,7 +21,7 @@ _ROLE_SUBJECTS = {
     "hook": "A modular bridge joins separated luminous blocks.",
     "evidence": "Scattered geometric modules converge into one orderly assembly.",
     "mechanism": "Precision components channel light through a single rising pathway.",
-    "comparison": "Fragmented and unified modular structures stand in clear contrast.",
+    "comparison": "One continuous modular column changes from irregular dark segments below into precisely aligned illuminated segments above.",
     "implication": "Connected modules expand across a clean architectural field.",
     "cta": "Distinct geometric pieces interlock around an open central platform.",
 }
@@ -31,7 +31,7 @@ _NEGATIVE_PROMPT = (
     "signature, signage, people, person, face, portrait, body, hands, phone, laptop, "
     "computer, screen, monitor, tablet, book, paper, document, poster, frame, panel, grid, "
     "collage, interface, dashboard, UI, duplicated objects, malformed geometry, cluttered "
-    "lower third, busy foreground, blur, low resolution"
+    "lower third, busy foreground, blur, low resolution, split scene, diptych, multiple rooms"
 )
 
 
@@ -75,7 +75,8 @@ def compile_object_only_image_prompt(
     so a negative prompt cannot be relied upon to suppress unwanted subjects. The positive
     prompt therefore contains only desired visible objects and composition. All prohibited
     concepts remain in the audit negative prompt, while the executable positive prompt stays
-    well below CLIP's 77-token ceiling.
+    well below CLIP's 77-token ceiling. The comparison role uses one continuous object rather
+    than two opposing arrangements so the generated image remains one coherent scene.
     """
     del word_budget
     role = _role(director_prompt)

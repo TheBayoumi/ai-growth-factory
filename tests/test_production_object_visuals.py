@@ -38,6 +38,12 @@ class ProductionObjectVisualTests(unittest.TestCase):
             self.assertIn("empty dark lower third", prompt)
             self.assertIn("unmarked matte materials", prompt)
 
+        comparison = prompts["comparison"]
+        self.assertIn("One continuous modular column", comparison)
+        self.assertIn("irregular dark segments below", comparison)
+        self.assertIn("aligned illuminated segments above", comparison)
+        self.assertNotIn("stand in clear contrast", comparison)
+
     def test_prohibited_director_vocabulary_never_reaches_positive_prompt(self) -> None:
         compiled = compile_object_only_image_prompt(
             "Factual visual: A researcher with a laptop, books, framed panels, labels, "
@@ -67,7 +73,16 @@ class ProductionObjectVisualTests(unittest.TestCase):
 
         self.assertNotRegex(compiled.compiled_prompt.casefold(), r"\b(?:no|not|without)\b")
         self.assertIn("Precision components channel light", compiled.compiled_prompt)
-        self.assertEqual(compiled.compiler_version, "visual-compiler-v6-object-only")
+        self.assertEqual(compiled.compiler_version, "visual-compiler-v7-coherent-objects")
+
+    def test_comparison_negative_prompt_blocks_split_layouts(self) -> None:
+        compiled = compile_object_only_image_prompt(
+            "Factual visual: Compare configurations. composition grammar side-by-side comparison."
+        )
+
+        self.assertIn("split scene", compiled.negative_prompt)
+        self.assertIn("diptych", compiled.negative_prompt)
+        self.assertIn("multiple rooms", compiled.negative_prompt)
 
 
 if __name__ == "__main__":
