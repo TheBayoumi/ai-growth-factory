@@ -11,15 +11,17 @@ def install_production_runtime() -> None:
     helpers, and deterministic QC evidence overrides stale reviewer feedback. Publisher
     names are canonicalized from selected evidence URLs before package validation. Scene
     attribution is then handled by factory.source_attributed_llm at the exact package
-    boundary. Near-complete narration length is stabilized before the editorial wrapper.
-    Unsupported publisher relationships are grounded in explicit independent-source
-    language before the same validator runs. A separate story-coherence gate rejects
-    unrelated secondary sources and cross-source claim borrowing. Incomplete but otherwise
-    valid Qwen Omni feedback is normalized before the bounded selective repair loop.
-    Executable visual prompts must stay semantically distinct, generated keyframes pass an
-    agentic image review/regeneration loop, and captions are constrained to platform-safe
-    phrase widths before composition. Temporal QC excludes the separate caption layer while
-    retaining strict checks for generated video scenes.
+    boundary. Duplicate selected URLs are normalized at the production chat boundary and
+    force exact URL re-attribution instead of preserving stale numeric positions.
+    Near-complete narration length is stabilized before the editorial wrapper. Unsupported
+    publisher relationships are grounded in explicit independent-source language before the
+    same validator runs. A separate story-coherence gate rejects unrelated secondary sources
+    and cross-source claim borrowing. Incomplete but otherwise valid Qwen Omni feedback is
+    normalized before the bounded selective repair loop. Executable visual prompts must stay
+    semantically distinct, generated keyframes pass an agentic image review/regeneration
+    loop, and captions are constrained to platform-safe phrase widths before composition.
+    Temporal QC excludes the separate caption layer while retaining strict checks for
+    generated video scenes.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -33,6 +35,7 @@ def install_production_runtime() -> None:
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
     from .production_reviewer_feedback import install_production_reviewer_feedback
+    from .production_source_deduplication import install_production_source_deduplication
     from .production_source_publishers import (
         install_production_source_publisher_canonicalization,
     )
@@ -47,6 +50,7 @@ def install_production_runtime() -> None:
     install_production_source_publisher_canonicalization()
     install_production_narration_length_repair()
     install_production_content_gate()
+    install_production_source_deduplication()
     install_production_relationship_grounding()
     install_production_story_coherence()
     install_production_pacing()
