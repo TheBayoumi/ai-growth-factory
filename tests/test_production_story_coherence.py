@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import unittest
 from datetime import datetime, timezone
-
-import pytest
 
 from factory.feeds import SourceItem
 from factory.models import Scene, VideoPackage
@@ -50,88 +49,91 @@ def _package(urls: list[str], publishers: list[str], scenes: list[Scene]) -> Vid
     )
 
 
-def test_rejects_unrelated_secondary_source() -> None:
-    primary = _source(
-        "Microsoft Research",
-        "EvoLib: Turning experience into evolving knowledge",
-        "https://example.com/evolib",
-        "EvoLib stores lessons from completed tasks for later agent decisions.",
-    )
-    unrelated = _source(
-        "Google AI",
-        "Expanding managed agents with Gemini API hooks",
-        "https://example.com/gemini-hooks",
-        "Gemini API hooks simplify managed tool execution.",
-    )
-    package = _package(
-        [primary.url, unrelated.url],
-        [primary.publisher, unrelated.publisher],
-        [Scene("EvoLib", "EvoLib stores reusable experience.", "physical memory", 0)] * 6,
-    )
-
-    with pytest.raises(StoryCoherenceError, match="unrelated to the primary story"):
-        validate_story_coherence(package, [primary, unrelated])
-
-
-def test_rejects_primary_entity_borrowed_by_secondary_scene() -> None:
-    primary = _source(
-        "Microsoft Research",
-        "EvoLib: Turning experience into evolving knowledge",
-        "https://example.com/evolib",
-        "EvoLib stores lessons from completed tasks.",
-    )
-    related = _source(
-        "Independent Lab",
-        "Evolving knowledge evaluation under repeated tasks",
-        "https://example.com/evolving-knowledge-eval",
-        "The evaluation measures retained task knowledge and repeated decisions.",
-    )
-    scenes = [Scene("EvoLib", "EvoLib stores reusable experience.", "memory", 0)] * 5
-    scenes.append(
-        Scene(
-            "Wrong attribution",
-            "EvoLib is presented as the evaluated system in this unrelated source.",
-            "generic portrait",
-            1,
+class ProductionStoryCoherenceTests(unittest.TestCase):
+    def test_rejects_unrelated_secondary_source(self) -> None:
+        primary = _source(
+            "Microsoft Research",
+            "EvoLib: Turning experience into evolving knowledge",
+            "https://example.com/evolib",
+            "EvoLib stores lessons from completed tasks for later agent decisions.",
         )
-    )
-    package = _package(
-        [primary.url, related.url],
-        [primary.publisher, related.publisher],
-        scenes,
-    )
+        unrelated = _source(
+            "Google AI",
+            "Expanding managed agents with Gemini API hooks",
+            "https://example.com/gemini-hooks",
+            "Gemini API hooks simplify managed tool execution.",
+        )
+        package = _package(
+            [primary.url, unrelated.url],
+            [primary.publisher, unrelated.publisher],
+            [Scene("EvoLib", "EvoLib stores reusable experience.", "physical memory", 0)] * 6,
+        )
 
-    with pytest.raises(StoryCoherenceError, match="primary subject token"):
+        with self.assertRaisesRegex(StoryCoherenceError, "unrelated to the primary story"):
+            validate_story_coherence(package, [primary, unrelated])
+
+    def test_rejects_primary_entity_borrowed_by_secondary_scene(self) -> None:
+        primary = _source(
+            "Microsoft Research",
+            "EvoLib: Turning experience into evolving knowledge",
+            "https://example.com/evolib",
+            "EvoLib stores lessons from completed tasks.",
+        )
+        related = _source(
+            "Independent Lab",
+            "Evolving knowledge evaluation under repeated tasks",
+            "https://example.com/evolving-knowledge-eval",
+            "The evaluation measures retained task knowledge and repeated decisions.",
+        )
+        scenes = [Scene("EvoLib", "EvoLib stores reusable experience.", "memory", 0)] * 5
+        scenes.append(
+            Scene(
+                "Wrong attribution",
+                "EvoLib is presented as the evaluated system in this unrelated source.",
+                "generic portrait",
+                1,
+            )
+        )
+        package = _package(
+            [primary.url, related.url],
+            [primary.publisher, related.publisher],
+            scenes,
+        )
+
+        with self.assertRaisesRegex(StoryCoherenceError, "primary subject token"):
+            validate_story_coherence(package, [primary, related])
+
+    def test_accepts_related_sources_and_repairs_complete_thumbnail(self) -> None:
+        primary = _source(
+            "Microsoft Research",
+            "EvoLib: Turning experience into evolving knowledge",
+            "https://example.com/evolib",
+            "EvoLib stores lessons from completed tasks.",
+        )
+        related = _source(
+            "Independent Lab",
+            "EvoLib evaluation under repeated tasks",
+            "https://example.com/evolib-eval",
+            "EvoLib evaluation measures retained task knowledge.",
+        )
+        scenes = [
+            Scene("EvoLib memory", "EvoLib stores reusable task experience.", "memory", 0),
+            Scene("EvoLib test", "EvoLib evaluation measures repeated tasks.", "test", 1),
+            Scene("Mechanism", "Stored lessons guide later decisions.", "pathway", 0),
+            Scene("Evidence", "Repeated tasks measure retained knowledge.", "comparison", 1),
+            Scene("Implication", "Teams compare corrections and repeatability.", "workspace", 1),
+            Scene("Decision", "Engineers verify results before deployment.", "choice", 0),
+        ]
+        package = _package(
+            [primary.url, related.url],
+            [primary.publisher, related.publisher],
+            scenes,
+        )
+
         validate_story_coherence(package, [primary, related])
+        repaired = repair_thumbnail_copy(package, [primary, related])
+        self.assertEqual(repaired.thumbnail_text, "EVOLIB EXPLAINED")
 
 
-def test_accepts_related_sources_and_repairs_complete_thumbnail() -> None:
-    primary = _source(
-        "Microsoft Research",
-        "EvoLib: Turning experience into evolving knowledge",
-        "https://example.com/evolib",
-        "EvoLib stores lessons from completed tasks.",
-    )
-    related = _source(
-        "Independent Lab",
-        "EvoLib evaluation under repeated tasks",
-        "https://example.com/evolib-eval",
-        "EvoLib evaluation measures retained task knowledge.",
-    )
-    scenes = [
-        Scene("EvoLib memory", "EvoLib stores reusable task experience.", "memory", 0),
-        Scene("EvoLib test", "EvoLib evaluation measures repeated tasks.", "test", 1),
-        Scene("Mechanism", "Stored lessons guide later decisions.", "pathway", 0),
-        Scene("Evidence", "Repeated tasks measure retained knowledge.", "comparison", 1),
-        Scene("Implication", "Teams compare corrections and repeatability.", "workspace", 1),
-        Scene("Decision", "Engineers verify results before deployment.", "choice", 0),
-    ]
-    package = _package(
-        [primary.url, related.url],
-        [primary.publisher, related.publisher],
-        scenes,
-    )
-
-    validate_story_coherence(package, [primary, related])
-    repaired = repair_thumbnail_copy(package, [primary, related])
-    assert repaired.thumbnail_text == "EVOLIB EXPLAINED"
+if __name__ == "__main__":
+    unittest.main()
