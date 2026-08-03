@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
+
+from .models import VideoPackage
 
 
 _INSTALLED = False
@@ -86,21 +89,43 @@ def stabilize_production_narration(raw: dict[str, Any]) -> dict[str, Any]:
     return corrected
 
 
+def stabilize_video_package(package: VideoPackage) -> VideoPackage:
+    """Apply the same deterministic finalizer after base package parsing.
+
+    The base package validator accepts scripts from 120 words, while the production
+    editorial gate requires 130. Applying the finalizer here closes that boundary gap so a
+    120-129 word package cannot bypass the raw-JSON third-attempt stabilizer and then fail
+    repeatedly in the production wrapper.
+    """
+    raw = {"narration": package.narration}
+    corrected = stabilize_production_narration(raw)
+    narration = str(corrected.get("narration") or package.narration)
+    if narration == package.narration:
+        return package
+    return replace(package, narration=narration)
+
+
 def install_production_narration_length_repair() -> None:
-    """Install deterministic third-attempt narration stabilization."""
+    """Install deterministic raw-response and parsed-package stabilization."""
     global _INSTALLED
     if _INSTALLED:
         return
 
-    from . import local_llm
+    from . import local_llm, production_content
 
-    original = local_llm._stabilize_near_minimum_narration
+    original_raw_stabilizer = local_llm._stabilize_near_minimum_narration
+    original_ground = production_content._ground_generic_copy
 
     def production_stabilizer(raw: dict[str, Any]) -> dict[str, Any]:
         corrected = stabilize_production_narration(raw)
         if corrected is not raw:
             return corrected
-        return original(raw)
+        return original_raw_stabilizer(raw)
+
+    def production_ground(package: VideoPackage, sources: list[Any]) -> VideoPackage:
+        grounded = original_ground(package, sources)
+        return stabilize_video_package(grounded)
 
     local_llm._stabilize_near_minimum_narration = production_stabilizer
+    production_content._ground_generic_copy = production_ground
     _INSTALLED = True
