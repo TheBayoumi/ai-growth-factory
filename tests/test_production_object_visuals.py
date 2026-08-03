@@ -36,13 +36,15 @@ class ProductionObjectVisualTests(unittest.TestCase):
             self.assertLessEqual(len(prompt), 240)
             self.assertIsNone(forbidden.search(prompt), prompt)
             self.assertIn("empty dark lower third", prompt)
-            self.assertIn("unmarked matte materials", prompt)
+            self.assertIn("unmarked matte forms", prompt)
 
         comparison = prompts["comparison"]
-        self.assertIn("One continuous modular column", comparison)
-        self.assertIn("irregular dark segments below", comparison)
-        self.assertIn("aligned illuminated segments above", comparison)
+        self.assertIn("One modular column", comparison)
+        self.assertIn("rough dark blocks", comparison)
+        self.assertIn("aligned glowing blocks", comparison)
         self.assertNotIn("stand in clear contrast", comparison)
+        self.assertLessEqual(len(comparison.split()), 36)
+        self.assertLessEqual(len(comparison), 240)
 
     def test_prohibited_director_vocabulary_never_reaches_positive_prompt(self) -> None:
         compiled = compile_object_only_image_prompt(
@@ -73,7 +75,7 @@ class ProductionObjectVisualTests(unittest.TestCase):
 
         self.assertNotRegex(compiled.compiled_prompt.casefold(), r"\b(?:no|not|without)\b")
         self.assertIn("Precision components channel light", compiled.compiled_prompt)
-        self.assertEqual(compiled.compiler_version, "visual-compiler-v7-coherent-objects")
+        self.assertEqual(compiled.compiler_version, "visual-compiler-v8-coherent-clip-budget")
 
     def test_comparison_negative_prompt_blocks_split_layouts(self) -> None:
         compiled = compile_object_only_image_prompt(
