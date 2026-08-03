@@ -13,15 +13,18 @@ def install_production_runtime() -> None:
     attribution is then handled by factory.source_attributed_llm at the exact package
     boundary. Duplicate selected URLs are normalized at the production chat boundary and
     force exact URL re-attribution instead of preserving stale numeric positions.
-    Near-complete narration length is stabilized before the editorial wrapper. Unsupported
-    publisher relationships are grounded in explicit independent-source language before the
-    same validator runs. A separate story-coherence gate rejects unrelated secondary sources
-    and cross-source claim borrowing. Incomplete but otherwise valid Qwen Omni feedback is
-    normalized before the bounded selective repair loop. Executable visual prompts must stay
-    semantically distinct, generated keyframes pass an agentic image review/regeneration
-    loop, and captions are constrained to platform-safe phrase widths before composition.
-    Temporal QC excludes the separate caption layer while retaining strict checks for
-    generated video scenes.
+    The production controller then tries trend-ranked authoritative articles independently;
+    one official article supplies all factual claims while the separate trend snapshot proves
+    current demand. This prevents unrelated announcements from being spliced merely to meet
+    a publisher count. Near-complete narration length is stabilized before the editorial
+    wrapper. Unsupported publisher relationships are grounded in explicit independent-source
+    language before the same validator runs. A separate story-coherence gate rejects
+    unrelated secondary sources and cross-source claim borrowing. Incomplete but otherwise
+    valid Qwen Omni feedback is normalized before the bounded selective repair loop.
+    Executable visual prompts must stay semantically distinct, generated keyframes pass an
+    agentic image review/regeneration loop, and captions are constrained to platform-safe
+    phrase widths before composition. Temporal QC excludes the separate caption layer while
+    retaining strict checks for generated video scenes.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -35,6 +38,7 @@ def install_production_runtime() -> None:
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
     from .production_reviewer_feedback import install_production_reviewer_feedback
+    from .production_single_story_selection import install_production_single_story_selection
     from .production_source_deduplication import install_production_source_deduplication
     from .production_source_publishers import (
         install_production_source_publisher_canonicalization,
@@ -53,6 +57,7 @@ def install_production_runtime() -> None:
     install_production_source_deduplication()
     install_production_relationship_grounding()
     install_production_story_coherence()
+    install_production_single_story_selection()
     install_production_pacing()
     install_production_reviewer_feedback()
     install_production_voice_repair()
