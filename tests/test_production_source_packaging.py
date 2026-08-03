@@ -9,6 +9,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
     def test_every_production_runtime_module_exists(self):
         required = (
             "source_index_repair.py",
+            "production_audio_qc.py",
             "production_content.py",
             "production_source_publishers.py",
             "production_narration_length.py",
@@ -66,13 +67,18 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         self.assertIn("import decord, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
 
-    def test_runtime_installs_source_visual_and_media_aware_policies(self):
+    def test_runtime_installs_audio_source_visual_and_media_aware_policies(self):
         source = (ROOT / "factory" / "production_runtime.py").read_text(
             encoding="utf-8"
         )
+        self.assertIn("install_production_audio_qc", source)
         self.assertIn("install_production_source_publisher_canonicalization", source)
         self.assertIn("install_production_visual_semantics", source)
         self.assertIn("install_production_video_qc", source)
+        self.assertLess(
+            source.index("install_production_audio_qc()"),
+            source.index("install_production_pacing()"),
+        )
         self.assertLess(
             source.index("install_production_source_publisher_canonicalization()"),
             source.index("install_production_content_gate()"),
