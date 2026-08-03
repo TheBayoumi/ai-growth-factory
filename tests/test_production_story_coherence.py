@@ -82,15 +82,15 @@ def test_rejects_primary_entity_borrowed_by_secondary_scene() -> None:
     )
     related = _source(
         "Independent Lab",
-        "EvoLib evaluation under repeated tasks",
-        "https://example.com/evolib-eval",
-        "An EvoLib evaluation measures retained task knowledge.",
+        "Evolving knowledge evaluation under repeated tasks",
+        "https://example.com/evolving-knowledge-eval",
+        "The evaluation measures retained task knowledge and repeated decisions.",
     )
     scenes = [Scene("EvoLib", "EvoLib stores reusable experience.", "memory", 0)] * 5
     scenes.append(
         Scene(
             "Wrong attribution",
-            "Google AI highlighted EvoLib as a Gemini capability.",
+            "EvoLib is presented as the evaluated system in this unrelated source.",
             "generic portrait",
             1,
         )
@@ -101,7 +101,7 @@ def test_rejects_primary_entity_borrowed_by_secondary_scene() -> None:
         scenes,
     )
 
-    with pytest.raises(StoryCoherenceError, match="unsupported publisher"):
+    with pytest.raises(StoryCoherenceError, match="primary subject token"):
         validate_story_coherence(package, [primary, related])
 
 
