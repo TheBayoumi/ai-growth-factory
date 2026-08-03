@@ -13,17 +13,20 @@ def install_production_runtime() -> None:
     attribution is then handled by factory.source_attributed_llm at the exact package
     boundary. Near-complete narration length is stabilized before the editorial wrapper.
     Unsupported publisher relationships are grounded in explicit independent-source
-    language before the same validator runs. Incomplete but otherwise valid Qwen Omni
-    feedback is normalized before the bounded selective repair loop executes. Executable
-    visual prompts must stay semantically distinct, Wan motion is bound to each scene's
-    actual subject, and temporal QC excludes the separate caption layer while retaining
-    strict checks for generated video scenes.
+    language before the same validator runs. A separate story-coherence gate rejects
+    unrelated secondary sources and cross-source claim borrowing. Incomplete but otherwise
+    valid Qwen Omni feedback is normalized before the bounded selective repair loop.
+    Executable visual prompts must stay semantically distinct, generated keyframes pass an
+    agentic image review/regeneration loop, and captions are constrained to platform-safe
+    phrase widths before composition. Temporal QC excludes the separate caption layer while
+    retaining strict checks for generated video scenes.
     """
     global _INSTALLED
     if _INSTALLED:
         return
 
     from .production_audio_qc import install_production_audio_qc
+    from .production_caption_quality import install_production_caption_quality
     from .production_content import install_production_content_gate
     from .production_narration_length import install_production_narration_length_repair
     from .production_pacing import install_production_pacing
@@ -33,7 +36,9 @@ def install_production_runtime() -> None:
     from .production_source_publishers import (
         install_production_source_publisher_canonicalization,
     )
+    from .production_story_coherence import install_production_story_coherence
     from .production_video_qc import install_production_video_qc
+    from .production_visual_quality import install_production_visual_quality
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_semantics import install_production_visual_semantics
     from .production_voice_repair import install_production_voice_repair
@@ -43,11 +48,14 @@ def install_production_runtime() -> None:
     install_production_narration_length_repair()
     install_production_content_gate()
     install_production_relationship_grounding()
+    install_production_story_coherence()
     install_production_pacing()
     install_production_reviewer_feedback()
     install_production_voice_repair()
     install_production_visual_routing()
     install_production_visual_semantics()
+    install_production_visual_quality()
+    install_production_caption_quality()
     install_production_video_qc()
     install_production_renderer()
     _INSTALLED = True
