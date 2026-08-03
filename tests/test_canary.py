@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from contextlib import nullcontext
@@ -6,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from factory.canary import run_production_canary
+from factory.canary import _copy_voice_diagnostics, run_production_canary
 from factory.config import Settings
 from factory.feeds import SourceItem
 from factory.models import AudioMetrics, NarrationSegment, Scene, VideoPackage, VoiceContract
@@ -115,6 +116,60 @@ class CanaryTests(unittest.TestCase):
             self.assertTrue((artifact_dir / "narration.wav").exists())
             self.assertTrue((artifact_dir / "video-qc-report.json").exists())
             self.assertTrue((artifact_dir / "canary-result.json").exists())
+
+    def test_failed_voice_diagnostics_are_copied_before_workdir_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workdir = root / "work"
+            destination = root / "artifact"
+            segments = workdir / "segments"
+            segments.mkdir(parents=True)
+            destination.mkdir()
+
+            final_segment = segments / "segment-01-attempt-3-paced-normalized-3.wav"
+            final_segment.write_bytes(b"final-segment-audio")
+            review_audio = workdir / "voice-review-attempt-3.wav"
+            review_audio.write_bytes(b"review-audio")
+            normalized_audio = workdir / "voice-normalized-attempt-3.wav"
+            normalized_audio.write_bytes(b"normalized-audio")
+            manifest = workdir / "voice-review-manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "segments": [
+                            {
+                                "segment_id": 1,
+                                "audio_path": str(final_segment),
+                                "attempt": 3,
+                            }
+                        ],
+                        "reviews": [
+                            {
+                                "attempt": 3,
+                                "type": "model_review",
+                                "decision": "retry_segments",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _copy_voice_diagnostics(workdir, destination)
+
+            self.assertTrue((destination / "voice-review-manifest.json").is_file())
+            self.assertEqual(
+                (destination / "voice-segments" / final_segment.name).read_bytes(),
+                b"final-segment-audio",
+            )
+            self.assertEqual(
+                (destination / "voice-review-final.wav").read_bytes(),
+                b"review-audio",
+            )
+            self.assertEqual(
+                (destination / "narration-final-attempt.wav").read_bytes(),
+                b"normalized-audio",
+            )
 
 
 if __name__ == "__main__":
