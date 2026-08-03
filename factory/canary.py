@@ -109,7 +109,12 @@ def _copy_voice_diagnostics(workdir: Path, destination: Path) -> None:
     review_wavs = sorted(workdir.glob("voice-review-attempt-*.wav"))
     if review_wavs:
         _copy(review_wavs[-1], destination, "voice-review-final.wav")
-    normalized_wavs = sorted(workdir.glob("voice-*-normalized-attempt-*.wav"))
+    normalized_wavs = sorted(
+        {
+            *workdir.glob("voice-normalized-attempt-*.wav"),
+            *workdir.glob("voice-tempo-normalized-attempt-*.wav"),
+        }
+    )
     if normalized_wavs:
         _copy(normalized_wavs[-1], destination, "narration-final-attempt.wav")
 
