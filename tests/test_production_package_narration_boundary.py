@@ -48,7 +48,10 @@ class ProductionPackageNarrationBoundaryTests(unittest.TestCase):
                 "Follow for the next verified production result today."
             )
         )
-        self.assertIn("open the linked primary sources", corrected.narration)
+        self.assertIn(
+            "Before adoption, read the linked source and test the claim on a controlled task.",
+            corrected.narration,
+        )
         self.assertEqual(len(original.narration.split()), 125)
 
     def test_valid_parsed_package_is_preserved(self) -> None:
