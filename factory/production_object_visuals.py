@@ -7,7 +7,7 @@ from .visual_prompt_compiler import CompiledVisualPrompt
 
 
 _INSTALLED = False
-_COMPILER_VERSION = "visual-compiler-v7-coherent-objects"
+_COMPILER_VERSION = "visual-compiler-v8-coherent-clip-budget"
 _SPACE_RE = re.compile(r"\s+")
 _FORBIDDEN_POSITIVE_RE = re.compile(
     r"\b(?:no|not|without|text|letter|number|symbol|caption|subtitle|logo|watermark|"
@@ -21,7 +21,7 @@ _ROLE_SUBJECTS = {
     "hook": "A modular bridge joins separated luminous blocks.",
     "evidence": "Scattered geometric modules converge into one orderly assembly.",
     "mechanism": "Precision components channel light through a single rising pathway.",
-    "comparison": "One continuous modular column changes from irregular dark segments below into precisely aligned illuminated segments above.",
+    "comparison": "One modular column rises from rough dark blocks into aligned glowing blocks.",
     "implication": "Connected modules expand across a clean architectural field.",
     "cta": "Distinct geometric pieces interlock around an open central platform.",
 }
@@ -82,8 +82,8 @@ def compile_object_only_image_prompt(
     role = _role(director_prompt)
     subject = _ROLE_SUBJECTS[role]
     compiled = _clean(
-        "Vertical premium 3D scene, unmarked matte materials, deep blue and amber lighting. "
-        f"{subject} Composition concentrated above center; empty dark lower third; soft volumetric light."
+        "Vertical 3D scene, unmarked matte forms, blue and amber light. "
+        f"{subject} Subject above center; empty dark lower third; soft volumetric light."
     )
     words = compiled.split()
     if len(words) > 36 or len(compiled) > 240:
