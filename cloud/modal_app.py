@@ -100,6 +100,7 @@ worker_image = (
             "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B",
             "QWEN_OMNI_MAX_NEW_TOKENS": "700",
             "AUDIO_WPM_TOLERANCE": "15",
+            "MIN_PRIMARY_SOURCES": "1",
             "VISUAL_IMAGE_BACKEND": "auto",
             "VISUAL_FLUX_MODEL": "black-forest-labs/FLUX.1-schnell",
             "VISUAL_FLUX_STEPS": "4",
