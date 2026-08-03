@@ -24,9 +24,10 @@ def install_production_runtime() -> None:
     unrelated secondary sources and cross-source claim borrowing. Incomplete but otherwise
     valid Qwen Omni feedback is normalized before the bounded selective repair loop.
     Executable visual prompts must stay semantically distinct, generated keyframes pass an
-    agentic image review/regeneration loop, and captions are constrained to platform-safe
-    phrase widths before composition. Temporal QC excludes the separate caption layer while
-    retaining strict checks for generated video scenes.
+    agentic image review/regeneration loop, and the final production compiler emits short
+    object-only positive prompts that remain safely below the SDXL CLIP token limit. Captions
+    are constrained to platform-safe phrase widths before composition. Temporal QC excludes
+    the separate caption layer while retaining strict checks for generated video scenes.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -36,6 +37,7 @@ def install_production_runtime() -> None:
     from .production_caption_quality import install_production_caption_quality
     from .production_content import install_production_content_gate
     from .production_narration_length import install_production_narration_length_repair
+    from .production_object_visuals import install_production_object_visuals
     from .production_pacing import install_production_pacing
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
@@ -68,6 +70,7 @@ def install_production_runtime() -> None:
     install_production_visual_routing()
     install_production_visual_semantics()
     install_production_visual_quality()
+    install_production_object_visuals()
     install_production_caption_quality()
     install_production_video_qc()
     install_production_renderer()
