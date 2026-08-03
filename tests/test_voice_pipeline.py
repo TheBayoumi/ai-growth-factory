@@ -17,7 +17,11 @@ from factory.models import (
     FailedSegment,
     ReviewScores,
 )
-from factory.voice_pipeline import _global_repair, build_reviewed_narration
+from factory.voice_pipeline import (
+    VoiceGenerationError,
+    _global_repair,
+    build_reviewed_narration,
+)
 
 
 class FakeTTS:
@@ -119,6 +123,31 @@ class WeakThenStrongReviewer:
         return None
 
 
+class StubbornSegmentReviewer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def review(self, **kwargs) -> AudioReview:
+        self.calls += 1
+        return AudioReview(
+            decision="retry_segments",
+            overall_score=0.83,
+            scores=_scores(0.90, naturalness=0.78),
+            failed_segments=(
+                FailedSegment(
+                    1,
+                    "The delivery remains robotic and the final technical phrase is strained",
+                    "Use smoother human phrasing and clearly articulate the final technical phrase",
+                ),
+            ),
+            summary="One segment needs repair",
+            reviewer_model="fixture",
+        )
+
+    def unload(self) -> None:
+        return None
+
+
 class VoicePipelineTests(unittest.TestCase):
     def test_only_rejected_segment_is_regenerated(self):
         narration = "First sentence has enough words for testing. Second sentence also has enough words for testing."
@@ -145,6 +174,56 @@ class VoicePipelineTests(unittest.TestCase):
         self.assertNotEqual(tts.calls[0][0], tts.calls[2][0])
         self.assertEqual(tts.calls[1][0], tts.calls[2][0])
         self.assertIn("dynamic but natural pacing", tts.calls[2][1])
+
+    def test_repeated_segment_failure_escalates_and_preserves_structured_manifest(self):
+        narration = "First sentence has enough words for testing. Second sentence also has enough words for testing."
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            "os.environ",
+            {
+                "NARRATION_SEGMENTS": "2",
+                "VOICE_REVIEW_MAX_ATTEMPTS": "3",
+                "AUDIO_MIN_RMS_DBFS": "-40",
+                "AUDIO_WPM_TOLERANCE": "45",
+                "AUDIO_SEGMENT_PAUSE_MS": "20",
+            },
+            clear=True,
+        ):
+            settings = Settings.from_env()
+            tts = FakeTTS(settings.voice_contract.target_wpm)
+            reviewer = StubbornSegmentReviewer()
+            with self.assertRaises(VoiceGenerationError) as raised:
+                build_reviewed_narration(
+                    settings,
+                    narration,
+                    Path(temporary),
+                    tts=tts,
+                    reviewer=reviewer,
+                )
+
+            error = raised.exception
+            self.assertEqual(reviewer.calls, 3)
+            self.assertEqual(len(tts.calls), 4)
+            self.assertIn("smoother human phrasing", tts.calls[2][1])
+            self.assertIn("Regenerate this segment from scratch", tts.calls[3][1])
+            self.assertIn("Do not imitate the previous take", tts.calls[3][1])
+            self.assertNotEqual(tts.calls[2][1], tts.calls[3][1])
+            self.assertIsNotNone(error.manifest_path)
+            assert error.manifest_path is not None
+            self.assertTrue(error.manifest_path.is_file())
+            self.assertEqual([item.segment_id for item in error.failed_segments], [1])
+            self.assertIn("segment 1", str(error))
+            self.assertIn("robotic", str(error))
+
+            manifest = json.loads(error.manifest_path.read_text(encoding="utf-8"))
+            repairs = [
+                item
+                for item in manifest["reviews"]
+                if item.get("type") == "selective_segment_repair"
+            ]
+            self.assertEqual(len(repairs), 2)
+            self.assertFalse(repairs[0]["escalated"])
+            self.assertTrue(repairs[1]["escalated"])
+            self.assertEqual(repairs[1]["retry_index"], 2)
 
     def test_locally_weak_approve_result_retries_all_segments(self):
         narration = "First sentence has enough words for testing. Second sentence also has enough words for testing."
