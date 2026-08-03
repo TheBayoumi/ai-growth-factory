@@ -19,7 +19,7 @@ from .trend_sources import fetch_trend_snapshot
 from .video_qc import verify_video_output
 from .visual_pipeline import release_accelerator_memory, render_visual_plan
 from .visual_prompt import construct_visual_plan
-from .voice_pipeline import build_reviewed_narration
+from .voice_pipeline import VoiceGenerationError, build_reviewed_narration
 from .voice_policy import contract_for_strategy
 
 
@@ -75,6 +75,43 @@ def _copy_scene_media(workdir: Path, destination: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     for path in sorted(source.glob("*.mp4")):
         _copy(path, target)
+
+
+def _copy_voice_diagnostics(workdir: Path, destination: Path) -> None:
+    """Persist the final reviewed assets even when voice generation raises.
+
+    VoiceGenerationError is raised before a VoicePipelineResult exists. The manifest and
+    WAVs still live in the temporary work directory, so they must be copied before the
+    canary's finally block removes that directory.
+    """
+    manifest = workdir / "voice-review-manifest.json"
+    if not manifest.is_file():
+        return
+    _copy(manifest, destination, "voice-review-manifest.json")
+
+    segment_target = destination / "voice-segments"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    copied: set[Path] = set()
+    for item in payload.get("segments") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_path = item.get("audio_path")
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        source = Path(raw_path)
+        if source.is_file() and source not in copied:
+            _copy(source, segment_target)
+            copied.add(source)
+
+    review_wavs = sorted(workdir.glob("voice-review-attempt-*.wav"))
+    if review_wavs:
+        _copy(review_wavs[-1], destination, "voice-review-final.wav")
+    normalized_wavs = sorted(workdir.glob("voice-*-normalized-attempt-*.wav"))
+    if normalized_wavs:
+        _copy(normalized_wavs[-1], destination, "narration-final-attempt.wav")
 
 
 def _copy_visual_audit(workdir: Path, destination: Path) -> None:
@@ -138,6 +175,7 @@ def _persist_generated_bundle(
     if voice is not None:
         _copy_if_exists(voice.audio_path, destination, "narration.wav")
         _copy_if_exists(voice.manifest_path, destination, "voice-review-manifest.json")
+    _copy_voice_diagnostics(workdir, destination)
     if (
         package is not None
         and source_max_age_hours is not None
@@ -306,7 +344,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
         )
         return result
     except Exception as exc:
-        failure = {
+        failure: dict[str, Any] = {
             "status": "canary_failed_closed",
             "canary_id": canary_id,
             "artifact_path": f"canaries/{canary_id}",
@@ -315,6 +353,16 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             "started_at": started_at.isoformat(),
             "failed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if isinstance(exc, VoiceGenerationError):
+            failure["voice_manifest"] = "voice-review-manifest.json"
+            failure["failed_segments"] = [
+                {
+                    "segment_id": item.segment_id,
+                    "reason": item.reason,
+                    "tts_instruction": item.tts_instruction,
+                }
+                for item in exc.failed_segments
+            ]
         (destination / "canary-failure.json").write_text(
             json.dumps(failure, indent=2, ensure_ascii=False),
             encoding="utf-8",
