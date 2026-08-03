@@ -10,6 +10,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         required = (
             "source_index_repair.py",
             "production_content.py",
+            "production_source_publishers.py",
             "production_narration_length.py",
             "production_relationship_grounding.py",
             "production_pacing.py",
@@ -65,12 +66,17 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         self.assertIn("import decord, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
 
-    def test_runtime_installs_semantic_visual_and_media_aware_qc_policies(self):
+    def test_runtime_installs_source_visual_and_media_aware_policies(self):
         source = (ROOT / "factory" / "production_runtime.py").read_text(
             encoding="utf-8"
         )
+        self.assertIn("install_production_source_publisher_canonicalization", source)
         self.assertIn("install_production_visual_semantics", source)
         self.assertIn("install_production_video_qc", source)
+        self.assertLess(
+            source.index("install_production_source_publisher_canonicalization()"),
+            source.index("install_production_content_gate()"),
+        )
         self.assertLess(
             source.index("install_production_visual_routing()"),
             source.index("install_production_visual_semantics()"),
