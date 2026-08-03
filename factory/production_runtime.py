@@ -25,9 +25,10 @@ def install_production_runtime() -> None:
     valid Qwen Omni feedback is normalized before the bounded selective repair loop.
     Executable visual prompts must stay semantically distinct, generated keyframes pass an
     agentic image review/regeneration loop, and the final production compiler emits short
-    object-only positive prompts that remain safely below the SDXL CLIP token limit. Captions
-    are constrained to platform-safe phrase widths before composition. Temporal QC excludes
-    the separate caption layer while retaining strict checks for generated video scenes.
+    object-only positive prompts that remain safely below the SDXL CLIP token limit. Before
+    review, the complete lower 32% is replaced by subject-free negative space with a soft
+    transition from the untouched upper image. Captions remain a separate animated ASS layer.
+    Temporal QC excludes that caption layer while retaining strict generated-video checks.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -35,6 +36,7 @@ def install_production_runtime() -> None:
 
     from .production_audio_qc import install_production_audio_qc
     from .production_caption_quality import install_production_caption_quality
+    from .production_caption_zone import install_production_caption_zone
     from .production_content import install_production_content_gate
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
@@ -71,6 +73,7 @@ def install_production_runtime() -> None:
     install_production_visual_semantics()
     install_production_visual_quality()
     install_production_object_visuals()
+    install_production_caption_zone()
     install_production_caption_quality()
     install_production_video_qc()
     install_production_renderer()
