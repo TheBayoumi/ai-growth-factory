@@ -7,8 +7,14 @@ import wave
 from array import array
 from pathlib import Path
 
-from factory.production_voice_calibration_v28 import compact_excess_silence_v28
 from factory.production_voice_bounds_v28 import bounded_tempo_factor_v28
+from factory.production_voice_calibration_v28 import (
+    calibrated_segment_band_v28,
+    compact_excess_silence_v28,
+    segment_candidate_reachable_v28,
+    synthesis_target_for_observation_v28,
+)
+from factory.video_profile import VideoProfile
 
 
 class ProductionVoiceCalibrationV28Tests(unittest.TestCase):
@@ -81,6 +87,23 @@ class ProductionVoiceCalibrationV28Tests(unittest.TestCase):
             event = compact_excess_silence_v28(source, output)
             self.assertAlmostEqual(event["removed_seconds"], 0.0, delta=0.025)
             self.assertAlmostEqual(self._duration(output), self._duration(source), delta=0.025)
+
+    def test_segment_band_leaves_headroom_for_inter_segment_pauses(self) -> None:
+        self.assertEqual(calibrated_segment_band_v28(VideoProfile()), (140.0, 144.0))
+
+    def test_failed_slow_segments_are_regenerated_instead_of_globally_speeding_track(self) -> None:
+        profile = VideoProfile()
+        self.assertFalse(segment_candidate_reachable_v28(116.2, profile=profile))
+        self.assertFalse(segment_candidate_reachable_v28(105.3, profile=profile))
+        self.assertEqual(synthesis_target_for_observation_v28(116.2, profile=profile), 174)
+        self.assertEqual(synthesis_target_for_observation_v28(105.3, profile=profile), 185)
+
+    def test_good_and_safely_slowable_segments_are_retained(self) -> None:
+        profile = VideoProfile()
+        self.assertTrue(segment_candidate_reachable_v28(142.0, profile=profile))
+        self.assertTrue(segment_candidate_reachable_v28(160.9, profile=profile))
+        self.assertFalse(segment_candidate_reachable_v28(190.0, profile=profile))
+        self.assertEqual(synthesis_target_for_observation_v28(190.0, profile=profile), 115)
 
 
 if __name__ == "__main__":
