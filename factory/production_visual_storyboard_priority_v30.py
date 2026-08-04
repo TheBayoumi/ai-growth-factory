@@ -7,7 +7,7 @@ _INSTALLED = False
 
 
 def classify_claim_v30(claim: str) -> str:
-    """Classify by the most specific production meaning, not the first generic keyword."""
+    """Classify by the most specific production meaning, not generic shared keywords."""
     lowered = clean(claim).casefold()
     if any(term in lowered for term in ("before adoption", "controlled task", "test the claim", "repeatability", "failure rate")):
         return "controlled_test"
@@ -24,14 +24,17 @@ def classify_claim_v30(claim: str) -> str:
         return "expertise_support"
     if any(term in lowered for term in ("computing resources", "compute resources", "advanced computing", "data infrastructure")):
         return "compute_resources"
-    if any(term in lowered for term in ("state and multistate", "nationwide", "across the us", "regional", "stronger foundation")):
-        return "regional_network"
-    if any(term in lowered for term in ("expanding access", "tools and knowledge", "accessible", "access to ai", "knowledge")):
-        return "access_knowledge"
+    # Explicit participation in the hubs/partnership program describes the partnership itself,
+    # even when the program name also contains the word regional.
     if any(term in lowered for term in ("joining", "hubs program", "partnership", "collaboration", "initiative")):
         return "partnership_hub"
+    if any(term in lowered for term in ("state and multistate", "nationwide", "across the us", "regional", "stronger foundation")):
+        return "regional_network"
+    # Explicit audience roles are more specific than generic accessibility language.
     if any(term in lowered for term in ("educator", "student", "education", "learning", "teach", "classroom")):
         return "education"
+    if any(term in lowered for term in ("expanding access", "tools and knowledge", "accessible", "access to ai", "knowledge")):
+        return "access_knowledge"
     if any(term in lowered for term in ("expertise", "support", "research")):
         return "expertise_support"
     return "partnership_hub"
