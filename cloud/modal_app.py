@@ -27,9 +27,6 @@ worker_image = (
         "sox",
         "libsox-fmt-all",
         "git",
-        "build-essential",
-        "python3-dev",
-        "ninja-build",
         "libgl1",
         "libglib2.0-0",
         "fontconfig",
@@ -49,6 +46,7 @@ worker_image = (
         "imageio-ffmpeg==0.6.0",
         "numpy==2.2.6",
         "numba==0.64.0",
+        "bitsandbytes==0.50.0",
         "soundfile>=0.12,<0.14",
         "qwen-tts==0.1.1",
         "transformers==4.57.3",
@@ -62,23 +60,20 @@ worker_image = (
         "einops>=0.8,<1",
     )
     .run_commands(
-        "python -m pip install optimum==1.27.0",
-        "python -m pip install gptqmodel==5.7.0 --no-build-isolation",
         (
-            "python -c \"import decord, gptqmodel, imageio, imageio_ffmpeg, numba, numpy, optimum, torch, torchvision; "
+            "python -c \"import bitsandbytes, decord, imageio, imageio_ffmpeg, numba, numpy, torch, torchvision; "
             "from importlib.metadata import version; "
             "from qwen_tts import Qwen3TTSModel; "
             "from qwen_omni_utils import process_mm_info; "
-            "from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor; "
+            "from transformers import BitsAndBytesConfig, Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor; "
             "from diffusers import AutoencoderKLWan, FluxPipeline, StableDiffusionXLPipeline, "
             "UNet2DConditionModel, WanImageToVideoPipeline; "
             "assert imageio.__version__ == '2.37.0', imageio.__version__; "
             "assert numpy.__version__ == '2.2.6', numpy.__version__; "
             "assert numba.__version__ == '0.64.0', numba.__version__; "
-            "assert version('optimum') == '1.27.0', version('optimum'); "
-            "assert version('gptqmodel') == '5.7.0', version('gptqmodel'); "
+            "assert version('bitsandbytes') == '0.50.0', version('bitsandbytes'); "
             "assert imageio_ffmpeg.get_ffmpeg_exe(); "
-            "print('Voice, GPTQ reviewer, image, and Wan2.2 runtime import preflight passed')\""
+            "print('Voice, bitsandbytes 4-bit Omni reviewer, image, and Wan2.2 runtime preflight passed')\""
         ),
         "fc-cache -f -v >/dev/null",
     )
@@ -105,7 +100,7 @@ worker_image = (
             "QWEN_OMNI_DEVICE": "cuda:0",
             "QWEN_OMNI_DTYPE": "float16",
             "QWEN_OMNI_ATTENTION": "sdpa",
-            "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4",
+            "QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B",
             "QWEN_OMNI_MAX_NEW_TOKENS": "700",
             "AUDIO_WPM_TOLERANCE": "15",
             "MIN_PRIMARY_SOURCES": "1",
