@@ -42,6 +42,7 @@ def install_production_runtime() -> None:
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
     from .production_voice_convergence_v28 import install_production_voice_convergence_v28
     from .production_voice_repair import install_production_voice_repair
+    from .production_voice_runtime_v28 import install_production_voice_runtime_v28
 
     install_production_settings()
     install_production_audio_qc()
@@ -71,6 +72,7 @@ def install_production_runtime() -> None:
     install_production_editorial_v28()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
+    install_production_voice_runtime_v28()
     install_production_voice_convergence_v28()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
