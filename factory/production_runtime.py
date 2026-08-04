@@ -23,6 +23,9 @@ def install_production_runtime() -> None:
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
     from .production_pacing import install_production_pacing
+    from .production_qwen_omni_bitsandbytes_v28 import (
+        install_production_qwen_omni_bitsandbytes_v28,
+    )
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
     from .production_reviewer_feedback import install_production_reviewer_feedback
@@ -76,6 +79,7 @@ def install_production_runtime() -> None:
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
     install_production_voice_runtime_v28()
+    install_production_qwen_omni_bitsandbytes_v28()
     install_production_voice_convergence_v28()
     install_production_voice_editorial_pacing_v28()
 
