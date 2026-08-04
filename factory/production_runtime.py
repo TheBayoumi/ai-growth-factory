@@ -19,6 +19,7 @@ def install_production_runtime() -> None:
     from .production_caption_zone import install_production_caption_zone
     from .production_content import install_production_content_gate
     from .production_editorial_v28 import install_production_editorial_v28
+    from .production_narration_integrity_v28 import install_production_narration_integrity_v28
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
     from .production_pacing import install_production_pacing
@@ -44,6 +45,7 @@ def install_production_runtime() -> None:
     install_production_source_publisher_canonicalization()
     install_production_narration_length_repair()
     install_production_content_gate()
+    install_production_narration_integrity_v28()
     install_production_source_deduplication()
     install_production_relationship_grounding()
     install_production_story_coherence()
