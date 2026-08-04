@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
-from factory import local_llm
 import factory.production_scene_metadata as scene_metadata
+from factory import local_llm
 from factory.local_llm import LocalLLMError
 from factory.production_scene_metadata import enforce_production_scene_metadata
 
@@ -53,6 +53,16 @@ class ProductionSceneMetadataTests(unittest.TestCase):
             enforce_production_scene_metadata(raw)
 
         self.assertTrue(str(raw["scenes"][5]["body"]).endswith("community worldwide."))
+
+    def test_eighteen_long_words_cannot_cross_legacy_character_boundary(self) -> None:
+        raw = self.package()
+        raw["scenes"][1]["body"] = " ".join(["abcdefghijk"] * 18)
+
+        with self.assertRaisesRegex(
+            LocalLLMError,
+            r"Scene 1 body exceeds 180-character limit: 215",
+        ):
+            enforce_production_scene_metadata(raw)
 
     def test_overlong_heading_and_visual_are_rejected(self) -> None:
         raw = self.package()
