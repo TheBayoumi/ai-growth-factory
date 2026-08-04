@@ -17,6 +17,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "production_pacing.py",
             "production_reviewer_feedback.py",
             "production_voice_repair.py",
+            "production_qwen_omni_bitsandbytes_v28.py",
             "production_visual_routing.py",
             "production_visual_semantics.py",
             "production_video_qc.py",
@@ -64,9 +65,12 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"imageio==2.37.0"', source)
         self.assertIn('"imageio==2.37.0"', project)
-        self.assertIn("import decord, gptqmodel, imageio, imageio_ffmpeg", source)
+        self.assertIn("import bitsandbytes, decord, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
-        self.assertIn("Voice, GPTQ reviewer, image, and Wan2.2 runtime import preflight passed", source)
+        self.assertIn(
+            "Voice, bitsandbytes 4-bit Omni reviewer, image, and Wan2.2 runtime preflight passed",
+            source,
+        )
 
     def test_runtime_installs_audio_source_visual_and_media_aware_policies(self):
         source = (ROOT / "factory" / "production_runtime.py").read_text(
@@ -74,6 +78,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         )
         self.assertIn("install_production_audio_qc", source)
         self.assertIn("install_production_source_publisher_canonicalization", source)
+        self.assertIn("install_production_qwen_omni_bitsandbytes_v28", source)
         self.assertIn("install_production_visual_semantics", source)
         self.assertIn("install_production_video_qc", source)
         self.assertLess(
@@ -83,6 +88,10 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         self.assertLess(
             source.index("install_production_source_publisher_canonicalization()"),
             source.index("install_production_content_gate()"),
+        )
+        self.assertLess(
+            source.index("install_production_qwen_omni_bitsandbytes_v28()"),
+            source.index("install_production_voice_convergence_v28()"),
         )
         self.assertLess(
             source.index("install_production_visual_routing()"),
