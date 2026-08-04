@@ -7,10 +7,28 @@ _INSTALLED = False
 
 
 def classify_claim_v30(claim: str) -> str:
-    """Classify by the most specific production meaning, not generic shared keywords."""
+    """Route a spoken claim by its most specific physical story, not generic AI vocabulary."""
     lowered = clean(claim).casefold()
-    if any(term in lowered for term in ("before adoption", "controlled task", "test the claim", "repeatability", "failure rate")):
+
+    # Verification and evaluation claims must become measurable physical tests.
+    if any(
+        term in lowered
+        for term in (
+            "before adoption",
+            "controlled task",
+            "test the claim",
+            "repeatability",
+            "failure rate",
+            "train and evaluate",
+            "evaluate ai agents",
+            "evaluation across",
+            "sources:",
+            "source:",
+        )
+    ):
         return "controlled_test"
+
+    # A complete compute/data/software/expertise bundle is a human-support story, not merely racks.
     if any(
         term in lowered
         for term in (
@@ -22,25 +40,83 @@ def classify_claim_v30(claim: str) -> str:
         )
     ):
         return "expertise_support"
-    if any(term in lowered for term in ("computing resources", "compute resources", "advanced computing", "data infrastructure")):
+
+    # Reuse, shared infrastructure, and model-performance claims require visible compute plumbing.
+    if any(
+        term in lowered
+        for term in (
+            "computing resources",
+            "compute resources",
+            "advanced computing",
+            "data infrastructure",
+            "reuse of infrastructure",
+            "reuse infrastructure",
+            "infrastructure reuse",
+            "shared infrastructure",
+            "smaller models",
+            "strong performance",
+        )
+    ):
         return "compute_resources"
-    # Explicit participation in the hubs program describes the partnership itself, even when the
-    # program name also contains words such as regional, research, or education.
+
+    # Explicit participation describes a partnership even when the programme name contains
+    # regional, research, or education vocabulary.
     if any(term in lowered for term in ("joining", "hubs program")):
         return "partnership_hub"
-    if any(term in lowered for term in ("state and multistate", "nationwide", "across the us", "regional", "stronger foundation")):
+
+    # Scale and multi-system orchestration are represented by a connected physical network.
+    if any(
+        term in lowered
+        for term in (
+            "state and multistate",
+            "nationwide",
+            "across the us",
+            "regional",
+            "stronger foundation",
+            "scalable agentic",
+            "complex ai systems",
+            "multiple ai tasks",
+            "wide range of tasks",
+        )
+    ):
         return "regional_network"
+
     # Explicit audience roles are more specific than generic accessibility language.
     if any(term in lowered for term in ("educator", "student", "education", "learning", "teach", "classroom")):
         return "education"
-    # Access is a concrete outcome and must outrank generic context words such as partnership,
-    # initiative, or support.
+
+    # Access is a concrete outcome and must outrank generic partnership/support words.
     if any(term in lowered for term in ("expanding access", "tools and knowledge", "accessible", "access to ai", "knowledge")):
         return "access_knowledge"
-    if any(term in lowered for term in ("partnership", "collaboration", "initiative")):
+
+    # Public/open availability and collaboration become a shared physical workspace.
+    if any(
+        term in lowered
+        for term in (
+            "public use",
+            "open-source",
+            "open source",
+            "collaboration",
+            "partnership",
+            "initiative",
+        )
+    ):
         return "partnership_hub"
-    if any(term in lowered for term in ("expertise", "support", "research")):
+
+    # Efficiency and innovation claims require visible expert work rather than empty architecture.
+    if any(
+        term in lowered
+        for term in (
+            "efficient and effective",
+            "focus on innovation",
+            "rather than infrastructure",
+            "expertise",
+            "support",
+            "research",
+        )
+    ):
         return "expertise_support"
+
     return "partnership_hub"
 
 
