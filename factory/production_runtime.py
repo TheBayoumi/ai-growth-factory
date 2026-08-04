@@ -5,7 +5,11 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v28 is the final authority."""
+    """Install production policies in deterministic order; v28 is the final authority.
+
+    Source attribution remains owned by factory.source_attributed_llm at the validated package
+    boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
+    """
     global _INSTALLED
     if _INSTALLED:
         return
