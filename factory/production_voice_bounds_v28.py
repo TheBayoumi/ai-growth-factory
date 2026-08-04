@@ -10,6 +10,36 @@ _INSTALLED = False
 _EPSILON = 1e-9
 
 
+def bounded_tempo_factor_v28(
+    *,
+    estimated_wpm: float,
+    target_wpm: int,
+    tolerance: int,
+    minimum_factor: float = 0.85,
+    maximum_factor: float = 1.15,
+) -> float | None:
+    """Return a correction only when the accepted range is reachable at <=1.15x."""
+    from . import audio_qc
+
+    profile = VideoProfile.from_env()
+    minimum = max(float(audio_qc.MIN_TEMPO_FACTOR), float(minimum_factor))
+    maximum = min(float(profile.maximum_tempo_factor), float(maximum_factor))
+    factor = audio_qc.tempo_correction_factor(
+        estimated_wpm=estimated_wpm,
+        target_wpm=target_wpm,
+        tolerance=tolerance,
+        minimum_factor=minimum,
+        maximum_factor=maximum,
+    )
+    if factor is None:
+        return None
+    if factor < minimum - _EPSILON or factor > maximum + _EPSILON:
+        raise audio_qc.AudioQCError(
+            f"v28 tempo factor {factor:.12f} escaped {minimum:.2f}-{maximum:.2f}"
+        )
+    return min(max(float(factor), minimum), maximum)
+
+
 def install_production_voice_bounds_v28() -> None:
     """Make the v28 tempo ceiling authoritative at every voice-pipeline call site.
 
@@ -40,22 +70,13 @@ def install_production_voice_bounds_v28() -> None:
         maximum_factor: float = maximum,
         **_ignored: Any,
     ) -> float | None:
-        bounded_minimum = max(minimum, float(minimum_factor))
-        bounded_maximum = min(maximum, float(maximum_factor))
-        factor = audio_qc.tempo_correction_factor(
+        return bounded_tempo_factor_v28(
             estimated_wpm=estimated_wpm,
             target_wpm=target_wpm,
             tolerance=tolerance,
-            minimum_factor=bounded_minimum,
-            maximum_factor=bounded_maximum,
+            minimum_factor=minimum_factor,
+            maximum_factor=maximum_factor,
         )
-        if factor is None:
-            return None
-        if factor < minimum - _EPSILON or factor > maximum + _EPSILON:
-            raise audio_qc.AudioQCError(
-                f"v28 tempo factor {factor:.12f} escaped {minimum:.2f}-{maximum:.2f}"
-            )
-        return min(max(float(factor), minimum), maximum)
 
     def strict_correct_audio_tempo(
         input_path: Path,
