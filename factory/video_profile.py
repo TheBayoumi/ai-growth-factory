@@ -10,21 +10,21 @@ from typing import Any
 class VideoProfile:
     """Runtime-editable editorial contract for one short-form channel profile."""
 
-    name: str = "tech_news_explainer_v28"
+    name: str = "tech_news_explainer_v32"
     target_wpm: int = 142
     minimum_wpm: int = 138
     maximum_wpm: int = 146
     maximum_tempo_factor: float = 1.15
     segment_pause_ms: int = 280
     pre_cta_pause_ms: int = 550
-    minimum_shots: int = 14
-    target_shots: int = 17
+    minimum_shots: int = 16
+    target_shots: int = 20
     maximum_shots: int = 20
     minimum_shot_seconds: float = 1.65
     maximum_shot_seconds: float = 4.25
     maximum_wan_shot_seconds: float = 3.30
     first_ten_seconds_minimum_shots: int = 4
-    wan_shots: int = 3
+    wan_shots: int = 6
     caption_minimum_words: int = 2
     caption_maximum_words: int = 5
     caption_maximum_characters: int = 34
@@ -57,9 +57,9 @@ class VideoProfile:
         if not 0.55 <= self.caption_baseline_ratio <= 0.88:
             raise ValueError("caption_baseline_ratio must stay in the platform-safe range")
         if self.allow_asset_looping:
-            raise ValueError("v28 never permits source-asset looping")
+            raise ValueError("v32 never permits source-asset looping")
         if self.allow_destructive_caption_matte:
-            raise ValueError("v28 never permits destructive caption mattes")
+            raise ValueError("v32 never permits destructive caption mattes")
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
