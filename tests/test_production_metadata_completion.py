@@ -99,13 +99,14 @@ class ProductionMetadataCompletionTests(unittest.TestCase):
         source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
         self.assertIn('"numpy==2.2.6"', source)
         self.assertIn('"numba==0.64.0"', source)
+        self.assertIn('"bitsandbytes==0.50.0"', source)
         self.assertIn('gpu="A10"', source)
         self.assertIn(
-            '"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4"',
+            '"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B"',
             source,
         )
-        self.assertIn("optimum==1.27.0", source)
-        self.assertIn("gptqmodel==5.7.0 --no-build-isolation", source)
+        self.assertNotIn("gptqmodel", source.casefold())
+        self.assertNotIn("optimum==", source)
 
 
 if __name__ == "__main__":
