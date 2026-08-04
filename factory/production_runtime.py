@@ -41,6 +41,9 @@ def install_production_runtime() -> None:
     from .production_visual_convergence_v29 import (
         install_production_visual_convergence_v29,
     )
+    from .production_visual_prompt_cleanup_v29 import (
+        install_production_visual_prompt_cleanup_v29,
+    )
     from .production_visual_quality import install_production_visual_quality
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_runtime_v28 import install_production_visual_runtime_v28
@@ -93,6 +96,7 @@ def install_production_runtime() -> None:
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
+    install_production_visual_prompt_cleanup_v29()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
