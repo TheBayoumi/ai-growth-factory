@@ -5,10 +5,12 @@ from pathlib import Path
 
 from factory.production_visual_convergence_v29 import (
     SDXLQualityKeyframeGeneratorV29,
-    _compile_physical_story_prompt,
     _concept_for,
     _physical_repair,
     _scene_for_attempt_v29,
+)
+from factory.production_visual_prompt_cleanup_v29 import (
+    compile_display_free_physical_prompt_v29,
 )
 from factory.production_visual_semantic_review_v28 import (
     _base_director_prompt,
@@ -78,7 +80,7 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         self.assertNotIn("microsoft", lowered)
 
     def test_v29_course_expansion_becomes_physical_workshop(self) -> None:
-        compiled = _compile_physical_story_prompt(GOOGLE_COURSE_PROMPT)
+        compiled = compile_display_free_physical_prompt_v29(GOOGLE_COURSE_PROMPT)
         lowered = compiled.compiled_prompt.casefold()
         self.assertIn("adult developers", lowered)
         self.assertIn("physical workbench", lowered)
@@ -86,19 +88,25 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         for forbidden in ("google", "353,000", "announcement", "screen", "monitor", "display"):
             self.assertNotIn(forbidden, lowered)
         self.assertLessEqual(compiled.word_count, 62)
-        self.assertEqual(compiled.compiler_version, "visual-compiler-v29-physical-story-cfg")
+        self.assertEqual(
+            compiled.compiler_version,
+            "visual-compiler-v29-physical-story-cfg-display-free",
+        )
 
     def test_v29_coding_story_uses_physical_programmable_hardware(self) -> None:
-        compiled = _compile_physical_story_prompt(DEVELOPER_CODING_PROMPT)
+        compiled = compile_display_free_physical_prompt_v29(DEVELOPER_CODING_PROMPT)
         lowered = compiled.compiled_prompt.casefold()
         self.assertIn("programmable controller", lowered)
         self.assertIn("physical hardware", lowered)
         self.assertNotIn("developer coding", lowered)
         self.assertNotIn("screen", lowered)
         self.assertNotIn("laptop", lowered)
+        self.assertNotIn("display", lowered)
 
     def test_v29_negative_prompt_can_forbid_text_collages_and_humanoids(self) -> None:
-        negative = _compile_physical_story_prompt(GOOGLE_COURSE_PROMPT).negative_prompt.casefold()
+        negative = compile_display_free_physical_prompt_v29(
+            GOOGLE_COURSE_PROMPT
+        ).negative_prompt.casefold()
         self.assertIn("readable text", negative)
         self.assertIn("screen", negative)
         self.assertIn("collage", negative)
@@ -243,6 +251,10 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         )
         self.assertLess(
             source.index("install_production_visual_convergence_v29()"),
+            source.index("install_production_visual_prompt_cleanup_v29()"),
+        )
+        self.assertLess(
+            source.index("install_production_visual_prompt_cleanup_v29()"),
             source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
         )
 
