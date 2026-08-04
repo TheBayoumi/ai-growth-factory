@@ -5,7 +5,7 @@ from dataclasses import replace
 
 
 _INSTALLED = False
-_DEFAULT_REVIEWER_MODEL = "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4"
+_DEFAULT_REVIEWER_MODEL = "Qwen/Qwen2.5-Omni-7B"
 
 
 def _pause_ms() -> int:
@@ -19,10 +19,10 @@ def _pause_ms() -> int:
 def install_production_voice_runtime_v28() -> None:
     """Select the stable reviewer and a natural pause budget before Settings is resolved.
 
-    The Modal image previously forced the 3B reviewer even though the reviewer implementation
-    and memory plan were designed for the quantized 7B checkpoint. The shorter sentence-aligned
-    v28 segments retain their own edge silence, so 140 ms of inserted silence produces a natural
-    join without lowering the assembled track below the accepted WPM range.
+    The production reviewer uses the authoritative Qwen2.5-Omni-7B checkpoint and applies
+    NF4 bitsandbytes quantization at load time. This avoids model-specific source builds while
+    preserving the stronger 7B audio assessment. The sentence-aligned v28 segments retain
+    their own edge silence, so 140 ms joins do not force whole-track acceleration.
     """
     global _INSTALLED
     if _INSTALLED:
