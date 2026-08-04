@@ -20,11 +20,11 @@ class ModalContractTests(unittest.TestCase):
     def test_modal_source_is_valid_python(self):
         ast.parse(self.source, filename=str(MODAL_APP))
 
-    def test_production_uses_a10_quantized_omni_and_visual_offload_capacity(self):
+    def test_production_uses_a10_4bit_omni_and_visual_offload_capacity(self):
         self.assertIn('gpu="A10"', self.source)
         self.assertNotIn('gpu="T4"', self.source)
         self.assertIn(
-            '"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4"',
+            '"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B"',
             self.source,
         )
         self.assertIn('"QWEN_OMNI_DTYPE": "float16"', self.source)
@@ -32,15 +32,15 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("memory=65536", self.source)
         self.assertIn("timeout=85 * 60", self.source)
 
-    def test_quantized_reviewer_has_pinned_gptq_runtime(self):
-        self.assertIn("optimum==1.27.0", self.source)
-        self.assertIn("gptqmodel==5.7.0 --no-build-isolation", self.source)
-        self.assertIn("python3-dev", self.source)
-        self.assertIn("ninja-build", self.source)
+    def test_quantized_reviewer_has_pinned_wheel_runtime(self):
+        self.assertIn('"bitsandbytes==0.50.0"', self.source)
+        self.assertNotIn("gptqmodel", self.source.casefold())
+        self.assertNotIn("optimum==", self.source)
+        self.assertIn("BitsAndBytesConfig", self.source)
         self.assertIn("Qwen2_5OmniForConditionalGeneration", self.source)
         self.assertIn("Qwen2_5OmniProcessor", self.source)
         self.assertIn(
-            "Voice, GPTQ reviewer, image, and Wan2.2 runtime import preflight passed",
+            "Voice, bitsandbytes 4-bit Omni reviewer, image, and Wan2.2 runtime preflight passed",
             self.source,
         )
 
