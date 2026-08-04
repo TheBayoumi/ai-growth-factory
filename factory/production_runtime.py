@@ -60,4 +60,11 @@ def install_production_runtime() -> None:
     # v28 installs last so legacy role templates, destructive mattes, fast pacing,
     # six-scene composition, and static-image exemptions cannot override it.
     install_production_editorial_v28()
+
+    # The legacy visual-quality adapter wraps visual_pipeline.generate_keyframes. Bind the
+    # image-generator entry point used by v28 to that reviewed/regenerating implementation so
+    # every editorial shot is still reviewed by Qwen before composition.
+    from . import image_generator, visual_pipeline
+
+    image_generator.generate_keyframes = visual_pipeline.generate_keyframes
     _INSTALLED = True
