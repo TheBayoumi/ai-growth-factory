@@ -29,6 +29,9 @@ def install_production_runtime() -> None:
     review, the complete lower 32% is replaced by subject-free negative space with a soft
     transition from the untouched upper image. Captions remain a separate animated ASS layer.
     Temporal QC excludes that caption layer while retaining strict generated-video checks.
+    Finally, scene headings, bodies, and visual directions are validated before the legacy
+    package parser can silently slice them, forcing the existing repair loop to return complete
+    metadata rather than corrupted partial words.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -44,6 +47,7 @@ def install_production_runtime() -> None:
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
     from .production_reviewer_feedback import install_production_reviewer_feedback
+    from .production_scene_metadata import install_production_scene_metadata
     from .production_settings import install_production_settings
     from .production_single_story_selection import install_production_single_story_selection
     from .production_source_deduplication import install_production_source_deduplication
@@ -77,4 +81,5 @@ def install_production_runtime() -> None:
     install_production_caption_quality()
     install_production_video_qc()
     install_production_renderer()
+    install_production_scene_metadata()
     _INSTALLED = True
