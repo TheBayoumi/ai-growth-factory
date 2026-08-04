@@ -78,11 +78,19 @@ class VisualStoryboardV30Tests(unittest.TestCase):
             for index, claim in enumerate(NVIDIA_CLAIMS)
         ]
         combined = " ".join(prompts).casefold()
-        self.assertIn("data-center aisle", combined)
-        self.assertIn("community technology classroom", combined)
-        self.assertIn("logistics bay", combined)
-        self.assertIn("controlled robotics test cell", combined)
+        expected_environments = (
+            "public research hub",
+            "clean machine room",
+            "university maker space",
+            "public research hall",
+            "hands-on training bench",
+            "data-storage hardware room",
+            "controlled robotics test cell",
+        )
+        for environment in expected_environments:
+            self.assertIn(environment, combined)
         self.assertNotIn("old-fashioned laboratory", combined)
+        self.assertEqual(len(set(prompts)), len(prompts))
 
     def test_retry_keeps_story_identity_and_replaces_source_direction(self) -> None:
         source = SceneVisualPrompt(
@@ -156,6 +164,11 @@ class VisualStoryboardV30Tests(unittest.TestCase):
         self.assertNotIn("super().review", source)
         self.assertIn("text_evidence", source)
         self.assertIn("confidence >= 0.85", source)
+
+    def test_package_boundary_applies_specificity_ordering(self) -> None:
+        source = Path("factory/__init__.py").read_text(encoding="utf-8")
+        self.assertIn("classify_claim_v30", source)
+        self.assertIn("_visual_storyboard_v30.classify_claim", source)
 
     def test_runtime_installs_v30_last(self) -> None:
         source = Path("factory/production_runtime.py").read_text(encoding="utf-8")
