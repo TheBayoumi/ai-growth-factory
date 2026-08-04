@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 
 _INSTALLED = False
@@ -44,12 +44,17 @@ def production_caption_safe_zone(
     result = Image.composite(matte, result, mask)
 
     repaired_zone = result.crop((0, matte_start, width, height))
-    after = image_generator._detail_score(repaired_zone)
-    if after > 0.05:
+    expected_matte = Image.new("RGB", repaired_zone.size, _MATTE_RGB)
+    mismatch = ImageChops.difference(repaired_zone, expected_matte).getbbox()
+    if mismatch is not None:
         raise image_generator.ImageGenerationError(
-            "Production caption matte contains unexpected visual detail: "
-            f"before={before:.3f}, after={after:.3f}"
+            "Production caption matte is not uniformly subject-free: "
+            f"before={before:.3f}, mismatch_bbox={mismatch}"
         )
+
+    # FIND_EDGES adds synthetic border responses even for a perfectly uniform image.
+    # Exact pixel equality above is the stronger invariant, so the repaired detail is zero.
+    after = 0.0
     return result, before, after
 
 
