@@ -61,10 +61,15 @@ def install_production_runtime() -> None:
     # six-scene composition, and static-image exemptions cannot override it.
     install_production_editorial_v28()
 
+    from . import image_generator, production_editorial_v28, visual_pipeline
+    from .production_editorial_compositor_v28 import compose_editorial_video_v28
+
     # The legacy visual-quality adapter wraps visual_pipeline.generate_keyframes. Bind the
     # image-generator entry point used by v28 to that reviewed/regenerating implementation so
     # every editorial shot is still reviewed by Qwen before composition.
-    from . import image_generator, visual_pipeline
-
     image_generator.generate_keyframes = visual_pipeline.generate_keyframes
+
+    # Bind the CFR-safe compositor proven against mixed image/Wan inputs. This adapter forbids
+    # source looping, gives stills deterministic motion, and forces yuv420p after subtitles.
+    production_editorial_v28._compose_editorial_video = compose_editorial_video_v28
     _INSTALLED = True
