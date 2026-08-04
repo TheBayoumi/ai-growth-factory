@@ -18,8 +18,8 @@ class VideoProfile:
     segment_pause_ms: int = 280
     pre_cta_pause_ms: int = 550
     minimum_shots: int = 14
-    target_shots: int = 16
-    maximum_shots: int = 18
+    target_shots: int = 17
+    maximum_shots: int = 20
     minimum_shot_seconds: float = 1.65
     maximum_shot_seconds: float = 4.25
     maximum_wan_shot_seconds: float = 3.30
