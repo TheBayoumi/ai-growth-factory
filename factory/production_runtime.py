@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v28 is the final authority.
+    """Install production policies in deterministic order; v29 visual convergence is final.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -38,6 +38,9 @@ def install_production_runtime() -> None:
     )
     from .production_story_coherence import install_production_story_coherence
     from .production_video_qc import install_production_video_qc
+    from .production_visual_convergence_v29 import (
+        install_production_visual_convergence_v29,
+    )
     from .production_visual_quality import install_production_visual_quality
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_runtime_v28 import install_production_visual_runtime_v28
@@ -77,8 +80,9 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # v28 installs last so legacy role templates, destructive mattes, fast pacing,
-    # six-scene composition, and static-image exemptions cannot override it.
+    # The editorial/voice v28 contracts remain authoritative. Visual convergence v29 installs
+    # after the v28 review layer so screen-driven directions, rotating retry targets, and the
+    # speed-distilled image backend cannot override physical story rendering.
     install_production_editorial_v28()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
@@ -88,12 +92,13 @@ def install_production_runtime() -> None:
     install_production_voice_editorial_pacing_v28()
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
+    install_production_visual_convergence_v29()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
-    # The legacy keyframe loop remains responsible for retry orchestration, while the final
-    # v28 compiler and semantic reviewer own what is generated and what may be approved.
+    # The final visual pipeline owns stable selective retries, approved-frame caching,
+    # claim-driven physical concepts, and set-level diversity enforcement.
     image_generator.generate_keyframes = visual_pipeline.generate_keyframes
 
     # Bind the CFR-safe compositor proven against mixed image/Wan inputs. This adapter forbids
