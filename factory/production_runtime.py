@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v30 storyboard authority is final.
+    """Install production policies in deterministic order; v31 subject authority is final.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -52,6 +52,9 @@ def install_production_runtime() -> None:
     )
     from .production_visual_semantics import install_production_visual_semantics
     from .production_visual_storyboard_v30 import install_production_visual_storyboard_v30
+    from .production_visual_subject_authority_v31 import (
+        install_production_visual_subject_authority_v31,
+    )
     from .production_voice_bounds_v28 import install_production_voice_bounds_v28
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
     from .production_voice_capacity_v29 import install_production_voice_capacity_v29
@@ -96,13 +99,15 @@ def install_production_runtime() -> None:
     install_production_voice_editorial_pacing_v28()
     install_production_voice_capacity_v29()
 
-    # Legacy visual adapters install first for compatibility. The configurable v30 storyboard
-    # registry is the final authority for generation prompts, retry targets, and review evidence.
+    # Legacy visual adapters install first for compatibility. v30 owns the storyboard registry and
+    # evidence reviewer; v31 is the final generation authority for subject-first prompts, effective
+    # retry corrections, and fail-closed SDXL CLIP-window validation.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
     install_production_visual_storyboard_v30()
+    install_production_visual_subject_authority_v31()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
