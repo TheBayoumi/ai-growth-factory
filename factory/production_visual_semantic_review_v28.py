@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
+import shutil
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
+
+from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 
 _INSTALLED = False
@@ -13,14 +19,75 @@ _DIRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 _TREATMENT_RE = re.compile(
-    r"Shot treatment:\s*(.+?)\.\s*(?:Depict|Generic|Preserve|REQUIRED CORRECTION:|$)",
+    r"Shot treatment:\s*(.+?)\.\s*(?:Depict|Generic|Preserve|V28 SCENE SETUP:|V28 REPAIR:|REQUIRED CORRECTION:|$)",
     re.IGNORECASE,
 )
-_REPAIR_RE = re.compile(r"REQUIRED CORRECTION:\s*(.+)$", re.IGNORECASE)
+_SETUP_RE = re.compile(r"V28 SCENE SETUP:\s*(.+?)(?:\.\s*V28 REPAIR:|$)", re.IGNORECASE)
+_REPAIR_RE = re.compile(r"(?:V28 REPAIR|REQUIRED CORRECTION):\s*(.+)$", re.IGNORECASE)
+_RETRY_TAIL_RE = re.compile(
+    r"\s*(?:\.\s*)?(?:V28 SCENE SETUP|V28 REPAIR|REQUIRED CORRECTION):.*$",
+    re.IGNORECASE,
+)
 _BRAND_RE = re.compile(
     r"\b(?:Microsoft|OpenAI|Google|NVIDIA|Anthropic|Meta|Amazon|Apple|"
     r"Gemini|Claude|Llama|GPT[-A-Za-z0-9.]*)\b",
     re.IGNORECASE,
+)
+_TEXTUAL_UI_RE = re.compile(
+    r"\b(?:open[- ]source\s+)?(?:framework|release|article|project|product|website|web)\s+page\b|"
+    r"\b(?:page|document|dashboard|interface|screen)\s+(?:content|text|copy|labels?)\b|"
+    r"\b(?:show|display|render|write|include)\s+(?:the\s+)?(?:page|text|words?|labels?|title|logo)\b",
+    re.IGNORECASE,
+)
+_GRAPH_RE = re.compile(r"\b(?:graph|chart|dashboard|performance metrics?|benchmark plot)\b", re.IGNORECASE)
+_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'/-]*")
+
+_MAX_PROMPT_WORDS = 58
+_MAX_REPAIR_WORDS = 20
+_MAX_ATTEMPTS = 4
+_CAPTION_ZONE_START_RATIO = 0.80
+
+_SHOT_SETUPS: tuple[tuple[str, str], ...] = (
+    (
+        "precision-bench",
+        "close documentary view of hands calibrating a sensor rig and compact robotic mechanism on a precision workbench",
+    ),
+    (
+        "collaboration-table",
+        "medium-wide candid view of three researchers discussing one physical prototype around a shared laboratory table",
+    ),
+    (
+        "compute-infrastructure",
+        "wide view beside unbranded compute racks and a connected experiment station, with visible cables and indicator lights",
+    ),
+    (
+        "automation-floor",
+        "dynamic factory-lab view with an autonomous cart or robotic station being tested by one researcher",
+    ),
+    (
+        "evaluation-rig",
+        "side view of a physical evaluation rig with cameras, sensors, status lights, and one clearly measurable action",
+    ),
+    (
+        "software-integration",
+        "over-shoulder view of an unbranded workstation beside modular hardware, with abstract geometric software blocks only",
+    ),
+    (
+        "scale-comparison",
+        "single-room comparison of a compact compute module and a larger module connected to the same shared infrastructure",
+    ),
+    (
+        "deployment-demo",
+        "human-scale demonstration scene where a small team observes a successful robotic or automation workflow",
+    ),
+    (
+        "system-overview",
+        "high-angle physical system overview showing distinct modules connected through real cables and shared equipment",
+    ),
+    (
+        "inspection-station",
+        "tight inspection scene using a microscope-like camera station on a circuit board or sensor assembly",
+    ),
 )
 
 
@@ -28,11 +95,20 @@ def _clean(value: object) -> str:
     return _SPACE_RE.sub(" ", str(value or "")).strip(" ,.;:")
 
 
+def _words(value: str) -> list[str]:
+    return _TOKEN_RE.findall(_clean(value))
+
+
+def _limit_words(value: str, limit: int) -> str:
+    words = _words(value)
+    return " ".join(words[:limit]).strip(" ,.;:")
+
+
 def _extract_direction(director_prompt: str) -> str:
     match = _DIRECTION_RE.search(director_prompt)
     if match:
         return _clean(match.group(1))
-    return _clean(director_prompt)
+    return _clean(_RETRY_TAIL_RE.sub("", director_prompt))
 
 
 def _extract_treatment(director_prompt: str) -> str:
@@ -40,111 +116,153 @@ def _extract_treatment(director_prompt: str) -> str:
     return _clean(match.group(1)) if match else "eye-level documentary framing"
 
 
+def _extract_setup(director_prompt: str) -> str:
+    match = _SETUP_RE.search(director_prompt)
+    return _clean(match.group(1)) if match else ""
+
+
 def _extract_repair(director_prompt: str) -> str:
     match = _REPAIR_RE.search(director_prompt)
     return _clean(match.group(1)) if match else ""
 
 
+def _base_director_prompt(director_prompt: str) -> str:
+    return _clean(_RETRY_TAIL_RE.sub("", director_prompt))
+
+
+def _normalize_visual_intent(direction: str) -> str:
+    value = _clean(_BRAND_RE.sub("", direction))
+    lowered = value.casefold()
+    if _TEXTUAL_UI_RE.search(value) or ("framework" in lowered and ("screen" in lowered or "page" in lowered)):
+        return (
+            "a researcher validating modular software on an unbranded workstation beside shared laboratory hardware, "
+            "with abstract geometric modules and no readable interface content"
+        )
+    if _GRAPH_RE.search(value):
+        return (
+            "a physical AI evaluation bench showing a measurable comparison through differently illuminated modules "
+            "and status lights, with no chart or labels"
+        )
+    if "team of researchers" in lowered or "working together" in lowered or "collaborat" in lowered:
+        return "three researchers collaborating around one modular AI prototype and shared experiment equipment"
+    if "reuse infrastructure" in lowered or "shared infrastructure" in lowered or "streamline" in lowered:
+        return "a researcher connecting reusable compute infrastructure to a compact experiment station"
+    if "small" in lowered and "large" in lowered and "model" in lowered:
+        return "small and large compute modules operating through the same reusable laboratory infrastructure"
+    if "multiple ai tasks" in lowered or "multiple task" in lowered or "various tasks" in lowered:
+        return "one shared AI workstation coordinating three visibly different physical test stations"
+    if "develop" in lowered and "application" in lowered:
+        return "a researcher assembling a modular robotic sensor prototype at a clean laboratory bench"
+    if "research" in lowered or "framework" in lowered or "agent" in lowered:
+        return "a researcher operating modular AI research hardware in a real laboratory workflow"
+    return value or "a concrete modular AI research workflow in a real laboratory"
+
+
+def _sanitize_repair(value: str, *, fallback_intent: str = "") -> str:
+    repair = _clean(_BRAND_RE.sub("", value))
+    if not repair:
+        return ""
+    if _TEXTUAL_UI_RE.search(repair) or "readable" in repair.casefold() or "page" in repair.casefold():
+        repair = (
+            "show the intended software concept through abstract modular shapes on an unbranded display, "
+            "with no readable text or labels"
+        )
+    repair = re.sub(
+        r"\b(?:website|webpage|article|document|page|logo|brand|title|caption|words?|letters?|numbers?)\b",
+        "",
+        repair,
+        flags=re.IGNORECASE,
+    )
+    repair = _clean(repair)
+    if not repair:
+        repair = "show the concrete physical action more clearly"
+    if fallback_intent and "literal" in repair.casefold():
+        repair = "show this physical intent clearly: " + fallback_intent
+    return _limit_words(repair, _MAX_REPAIR_WORDS)
+
+
+def _sanitize_negative_prompt(_value: str = "") -> str:
+    # Deliberately ignore legacy negatives. They repeatedly reintroduced bans on people,
+    # hands, screens, and devices, which are required subjects in the v28 visual grammar.
+    return _clean(
+        "readable text, pseudo-text, gibberish, typography, letters, numbers, logo, trademark, "
+        "watermark, signature, readable interface labels, poster, infographic, chart labels, "
+        "document layout, collage, grid, split frame, framed panels, generic corridor, skyscraper, "
+        "building facade, tower, generic blocks, generic orb, duplicate people, malformed anatomy, "
+        "extra limbs, distorted hands, warped equipment, blurry face, low resolution, oversharpening"
+    )
+
+
 def _camera_language(treatment: str) -> str:
     lowered = treatment.casefold()
     if "tight" in lowered or "detail" in lowered:
-        return "medium close documentary framing, 50mm lens, one clear foreground action"
+        return "medium-close 50mm documentary framing with one clear foreground action"
     if "wide" in lowered or "context" in lowered:
-        return "wide eye-level documentary view, 28mm lens, visible surrounding workflow"
+        return "wide 28mm eye-level view with the surrounding workflow visible"
     if "cause" in lowered or "directional" in lowered:
-        return "diagonal process composition, visible physical flow from input to result"
+        return "diagonal process composition showing a visible physical flow from input to result"
     if "comparison" in lowered or "two" in lowered:
-        return "balanced comparison inside one continuous room, visibly different physical arrangements"
+        return "balanced comparison within one continuous environment"
     if "human-scale" in lowered:
-        return "eye-level human-scale documentary framing, natural candid posture"
-    return "eye-level technology documentary framing, natural depth and one readable action"
+        return "eye-level candid documentary framing with natural posture"
+    return "eye-level technology documentary framing with natural depth"
 
 
 def _semantic_subject(direction: str) -> str:
-    lowered = direction.casefold()
-    if "graph" in lowered or "performance metric" in lowered:
-        return (
-            "a physical AI evaluation bench with one compact compute module connected to three "
-            "ascending illuminated status columns, clean indicator lights only, no chart, no labels"
-        )
-    if "team of researchers" in lowered or "working together" in lowered:
-        return (
-            "three generic adult AI researchers collaborating around a modular computing prototype "
-            "table, side and rear views, natural spacing, unbranded equipment"
-        )
-    if "multiple ai tasks" in lowered or "various" in lowered or "multiple task" in lowered:
-        return (
-            "one generic adult AI researcher at a central unbranded workstation connected to three "
-            "distinct physical test stations: a small robotic arm, an audio sensor rig, and a compact "
-            "compute module"
-        )
-    if "develop new ai applications" in lowered or "new ai applications" in lowered:
-        return (
-            "one generic adult AI researcher prototyping a modular robotic sensor system at a clean "
-            "laboratory workbench, unbranded tools and equipment"
-        )
-    if "streamline" in lowered or "reuse infrastructure" in lowered or "simplify" in lowered:
-        return (
-            "one generic adult AI researcher in a modern laboratory connecting reusable modular "
-            "compute racks to a compact experiment station, visible cable routing and shared hardware"
-        )
-    if "small" in lowered and "large" in lowered and "model" in lowered:
-        return (
-            "one compact compute module and one larger compute module using the same reusable laboratory "
-            "infrastructure, a generic researcher adjusting the shared connection"
-        )
-    if "researcher" in lowered or "framework" in lowered:
-        return (
-            "one generic adult AI researcher, three-quarter rear view, operating an unbranded modular "
-            "computing prototype in a real laboratory workspace, blank display surfaces with abstract light"
-        )
-    return (
-        "a concrete modular AI research prototype in a real laboratory workspace with one clear physical "
-        "interaction and unbranded equipment"
-    )
+    return _normalize_visual_intent(direction)
+
+
+def _shot_setup(scene_index: int) -> tuple[str, str]:
+    return _SHOT_SETUPS[scene_index % len(_SHOT_SETUPS)]
+
+
+def _fit_prompt(parts: Iterable[str], *, limit: int = _MAX_PROMPT_WORDS) -> str:
+    result: list[str] = []
+    for part in parts:
+        for word in _words(part):
+            if len(result) >= limit:
+                return " ".join(result).strip(" ,.;:") + "."
+            result.append(word)
+    return " ".join(result).strip(" ,.;:") + "."
 
 
 def compile_semantic_generation_prompt_v28(
     director_prompt: str,
     director_negative_prompt: str = "",
     *,
-    word_budget: int = 72,
+    word_budget: int = _MAX_PROMPT_WORDS,
 ) -> Any:
-    """Compile a visual-only prompt; never send narration prose to the diffusion model."""
-    del word_budget
+    """Compile a bounded visual-only prompt; narration and literal page requests never reach SDXL."""
+    del director_negative_prompt
     from .visual_prompt_compiler import CompiledVisualPrompt
 
-    direction = _BRAND_RE.sub("", _extract_direction(director_prompt))
+    direction = _normalize_visual_intent(_extract_direction(director_prompt))
     treatment = _extract_treatment(director_prompt)
-    repair = _BRAND_RE.sub("", _extract_repair(director_prompt))
+    setup = _extract_setup(director_prompt)
+    repair = _sanitize_repair(_extract_repair(director_prompt), fallback_intent=direction)
     subject = _semantic_subject(direction)
     camera = _camera_language(treatment)
-    repair_clause = f" Apply this correction: {repair}." if repair else ""
-    compiled = _clean(
-        "Photorealistic vertical technology documentary still. "
-        + subject
-        + ". "
-        + camera
-        + ". Realistic anatomy, realistic materials, natural laboratory lighting, restrained blue and "
-        "warm amber accents, full-frame environment, no staged portrait, no essential subject in the "
-        "lowest caption band."
-        + repair_clause
+    budget = min(_MAX_PROMPT_WORDS, max(42, int(word_budget)))
+    compiled = _fit_prompt(
+        (
+            "Photorealistic vertical technology documentary still",
+            subject,
+            setup,
+            camera,
+            "realistic anatomy and hands, believable equipment, natural laboratory lighting, restrained blue and warm amber accents",
+            "single coherent full-frame scene, no staged portrait",
+            repair,
+        ),
+        limit=budget,
     )
-    negative = _clean(
-        "readable text, pseudo-text, gibberish, letters, numbers, typography, logo, trademark, watermark, "
-        "signature, poster, infographic, chart, document, page, dashboard, interface labels, collage, grid, "
-        "split frame, framed panels, architecture-only scene, corridor, skyscraper, building facade, tower, "
-        "generic blocks, generic orb, duplicate people, malformed anatomy, extra limbs, distorted hands, "
-        "warped equipment, blurry face, camera shake, flicker, low resolution, oversharpening, "
-        + director_negative_prompt
-    )
+    negative = _sanitize_negative_prompt()
     return CompiledVisualPrompt(
         director_prompt=director_prompt,
         compiled_prompt=compiled,
         negative_prompt=negative,
-        word_count=len(compiled.split()),
-        word_budget=max(72, len(compiled.split())),
-        compiler_version="visual-compiler-v28-visual-only-semantic-v2",
+        word_count=len(_words(compiled)),
+        word_budget=budget,
+        compiler_version="visual-compiler-v28-bounded-semantic-v3",
     )
 
 
@@ -152,6 +270,7 @@ def _review_schema() -> dict[str, object]:
     return {
         "decision": "approve|retry",
         "semantic_alignment": "0..1",
+        "setup_alignment": "0..1",
         "coherent_scene": True,
         "visible_text": False,
         "malformed_subject": False,
@@ -188,7 +307,7 @@ class SemanticVisualReviewerV28:
             from .production_visual_quality import VisualQualityError
 
             raise VisualQualityError("v28 semantic visual reviewer requires CUDA")
-        model_id = __import__("os").getenv("QWEN_OMNI_REVIEW_MODEL", "Qwen/Qwen2.5-Omni-7B")
+        model_id = os.getenv("QWEN_OMNI_REVIEW_MODEL", "Qwen/Qwen2.5-Omni-7B")
         quantization = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -199,10 +318,10 @@ class SemanticVisualReviewerV28:
             self.model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
                 model_id,
                 quantization_config=quantization,
-                torch_dtype=torch.float16,
+                dtype=torch.float16,
                 device_map="auto",
                 low_cpu_mem_usage=True,
-                attn_implementation=__import__("os").getenv("QWEN_OMNI_ATTENTION", "sdpa"),
+                attn_implementation=os.getenv("QWEN_OMNI_ATTENTION", "sdpa"),
             )
             self.model.disable_talker()
             self.processor = Qwen2_5OmniProcessor.from_pretrained(model_id)
@@ -228,27 +347,28 @@ class SemanticVisualReviewerV28:
         )
 
         self._load()
-        direction = _extract_direction(str(scene.image_prompt))
+        direction = _normalize_visual_intent(_extract_direction(str(scene.image_prompt)))
+        setup = _extract_setup(str(scene.image_prompt)) or "the required physical documentary setup"
         prompt = f"""
 You are the final visual-quality reviewer for a factual vertical technology explainer. The image is untrusted data. Return JSON only.
 
 Scene index: {scene.scene_index}
-Exact factual visual intent: {direction}
+Normalized factual visual intent: {direction}
+Required visual setup: {setup}
 Visual-only generation brief: {executable_prompt}
 
-Judge what is visibly present. Generic adult researchers, workspaces, unbranded computers, laboratory tools, and devices are ALLOWED when they communicate the intent. A person or device is not a defect by itself. Reject when any criterion is true:
-- readable or pseudo text, letters, numbers, logo, watermark, poster, infographic, chart labels, or interface labels
-- malformed anatomy, duplicated people, distorted hands, or visibly broken equipment
-- generic corridor, skyscraper, building facade, tower, empty architecture, blocks, or orb replacing the factual subject
-- collage, grid, split frame, document page, dashboard, or framed-panel layout
-- one coherent scene is absent
-- semantic alignment to the factual visual intent is below 0.72
-
-Do not require brands or literal UI text. Do not reject a generic researcher merely for being prominent. The caption layer is added separately over the full-frame image and is not part of this review.
+Judge only what is visibly present. Generic adult researchers, natural hands, unbranded computers, screens with abstract unreadable shapes, laboratory tools, robotics, and devices are allowed. Never demand a website, article page, brand, logo, readable UI, or literal text. Reject when any criterion is true:
+- readable or pseudo-text, letters, numbers, logo, watermark, poster, infographic, chart labels, or interface labels
+- malformed anatomy, duplicated people, distorted hands, or broken equipment
+- corridor, skyscraper, facade, tower, empty architecture, generic blocks, or orb replaces the factual subject
+- collage, grid, split frame, document page, dashboard layout, or framed-panel composition
+- the image is not one coherent scene
+- semantic_alignment to the normalized intent is below 0.72
+- setup_alignment to the required visual setup is below 0.70
 
 Return exactly:
 {json.dumps(_review_schema(), ensure_ascii=False)}
-Use empty reason and repair_instruction when approved. A retry instruction must describe a concrete visual correction without requesting text.
+Use empty reason and repair_instruction when approved. A retry instruction must request a concrete physical correction in at most twenty words. It must never request readable text, a webpage, a logo, or branded UI.
 """.strip()
         conversation = [
             {
@@ -295,18 +415,23 @@ Use empty reason and repair_instruction when approved. A retry instruction must 
         if not decoded or not str(decoded[0]).strip():
             raise VisualQualityError("v28 semantic visual reviewer returned no response")
         raw = _extract_json(str(decoded[0]))
-        try:
-            alignment = max(0.0, min(1.0, float(raw.get("semantic_alignment", 0.0))))
-        except (TypeError, ValueError):
-            alignment = 0.0
-        as_bool = lambda key: bool(raw.get(key, False))
+
+        def score(key: str) -> float:
+            try:
+                return max(0.0, min(1.0, float(raw.get(key, 0.0))))
+            except (TypeError, ValueError):
+                return 0.0
+
+        semantic_alignment = score("semantic_alignment")
+        setup_alignment = score("setup_alignment")
         coherent = bool(raw.get("coherent_scene", False))
-        visible_text = as_bool("visible_text")
-        malformed = as_bool("malformed_subject")
-        architecture = as_bool("generic_architecture")
-        collage = as_bool("collage_layout")
+        visible_text = bool(raw.get("visible_text", False))
+        malformed = bool(raw.get("malformed_subject", False))
+        architecture = bool(raw.get("generic_architecture", False))
+        collage = bool(raw.get("collage_layout", False))
         approved = (
-            alignment >= 0.72
+            semantic_alignment >= 0.72
+            and setup_alignment >= 0.70
             and coherent
             and not visible_text
             and not malformed
@@ -314,14 +439,19 @@ Use empty reason and repair_instruction when approved. A retry instruction must 
             and not collage
         )
         reason = _clean_feedback(raw.get("reason"))
-        repair = _clean_feedback(raw.get("repair_instruction"))
+        repair = _sanitize_repair(
+            _clean_feedback(raw.get("repair_instruction")),
+            fallback_intent=direction,
+        )
         if approved:
             reason = ""
             repair = ""
         else:
             defects: list[str] = []
-            if alignment < 0.72:
-                defects.append(f"semantic alignment {alignment:.2f} is below 0.72")
+            if semantic_alignment < 0.72:
+                defects.append(f"semantic alignment {semantic_alignment:.2f} is below 0.72")
+            if setup_alignment < 0.70:
+                defects.append(f"setup alignment {setup_alignment:.2f} is below 0.70")
             if not coherent:
                 defects.append("image is not one coherent scene")
             if visible_text:
@@ -333,16 +463,15 @@ Use empty reason and repair_instruction when approved. A retry instruction must 
             if collage:
                 defects.append("collage, grid, or panel layout is present")
             reason = reason or "; ".join(defects) or "v28 semantic visual criteria failed"
-            repair = repair or (
-                "Regenerate one coherent photorealistic scene that literally shows "
-                + direction
-                + ", with no text, infographic layout, generic architecture, or malformed subjects"
+            repair = repair or _sanitize_repair(
+                "show the concrete physical action and required camera setup more clearly",
+                fallback_intent=direction,
             )
         return KeyframeReview(
             scene_index=int(scene.scene_index),
             attempt=attempt,
             decision="approve" if approved else "retry",
-            claim_alignment=alignment,
+            claim_alignment=min(semantic_alignment, setup_alignment),
             coherent_scene=coherent,
             visible_text=visible_text,
             prominent_person=False,
@@ -367,16 +496,244 @@ Use empty reason and repair_instruction when approved. A retry instruction must 
             pass
 
 
+def _caption_safe_zone_v28(image: Image.Image, *, start_ratio: float = _CAPTION_ZONE_START_RATIO) -> tuple[Image.Image, float, float]:
+    """Reserve only the local caption band; never erase or matte the lower third."""
+    source = image.convert("RGB")
+    width, height = source.size
+    start_y = max(1, min(height - 2, round(height * start_ratio)))
+    zone = source.crop((0, start_y, width, height))
+    before = float(ImageStat.Stat(zone.convert("L").filter(ImageFilter.FIND_EDGES)).mean[0])
+    softened = zone.filter(ImageFilter.GaussianBlur(radius=max(2.0, width / 220.0)))
+    mask = Image.new("L", zone.size, 0)
+    draw = ImageDraw.Draw(mask)
+    denominator = max(1, zone.height - 1)
+    for row in range(zone.height):
+        progress = row / denominator
+        alpha = round(48 * progress * progress)
+        draw.line((0, row, width, row), fill=alpha)
+    result = source.copy()
+    result.paste(Image.composite(softened, zone, mask), (0, start_y))
+    repaired = result.crop((0, start_y, width, height))
+    after = float(ImageStat.Stat(repaired.convert("L").filter(ImageFilter.FIND_EDGES)).mean[0])
+    return result, before, after
+
+
+def _scene_for_attempt(scene: Any, *, scene_index: int, attempt: int, repair: str = "") -> Any:
+    setup_name, setup_clause = _shot_setup(scene_index + max(0, attempt - 1) * 3)
+    base = _base_director_prompt(str(scene.image_prompt))
+    sanitized_repair = _sanitize_repair(repair, fallback_intent=_normalize_visual_intent(_extract_direction(base)))
+    suffix = f". V28 SCENE SETUP: {setup_name}; {setup_clause}"
+    if sanitized_repair:
+        suffix += f". V28 REPAIR: {sanitized_repair}"
+    return replace(
+        scene,
+        image_prompt=base + suffix,
+        negative_prompt=_sanitize_negative_prompt(),
+        seed=(int(scene.seed) + 104729 * max(0, attempt - 1)) & 0x7FFFFFFF,
+    )
+
+
+def _average_hash(path: Path, *, size: int = 16) -> int:
+    with Image.open(path) as image:
+        pixels = list(image.convert("L").resize((size, size), Image.Resampling.LANCZOS).getdata())
+    average = sum(pixels) / len(pixels)
+    value = 0
+    for pixel in pixels:
+        value = (value << 1) | int(pixel >= average)
+    return value
+
+
+def _diversity_failures(assets: dict[int, Any]) -> dict[int, str]:
+    failures: dict[int, str] = {}
+    signatures: list[tuple[int, int]] = []
+    for scene_index in sorted(assets):
+        signature = _average_hash(Path(assets[scene_index].path))
+        for previous_index, previous in signatures:
+            distance = (signature ^ previous).bit_count()
+            if distance < 20:
+                failures[scene_index] = (
+                    f"keyframe is visually too similar to scene {previous_index}; use a substantially different "
+                    "camera angle, environment, and physical action"
+                )
+                break
+        signatures.append((scene_index, signature))
+    return failures
+
+
+def _write_combined_manifest(
+    *,
+    output_dir: Path,
+    plan: Any,
+    assets: dict[int, Any],
+    history: list[Any],
+    diversity_failures: dict[int, str],
+) -> None:
+    ordered = [assets[index] for index in sorted(assets)]
+    payload = {
+        "backend": "sdxl_lightning" if ordered and "SDXL" in str(ordered[0].model).upper() else "production",
+        "model": str(ordered[0].model) if ordered else None,
+        "steps": int(os.getenv("VISUAL_SDXL_LIGHTNING_STEPS", "8")),
+        "width": int(plan.width),
+        "height": int(plan.height),
+        "captions_or_text_requested": False,
+        "prompt_compiler_version": ordered[0].prompt_compiler_version if ordered else None,
+        "caption_safe_zone": {
+            "start_ratio": _CAPTION_ZONE_START_RATIO,
+            "localized_softening": True,
+            "destructive_matte": False,
+            "text_added": False,
+        },
+        "asset_cache": {
+            "approved_assets_preserved_across_retries": True,
+            "regenerate_failed_only": True,
+        },
+        "set_diversity": {
+            "minimum_average_hash_distance": 20,
+            "passed": not diversity_failures,
+            "failures": diversity_failures,
+        },
+        "assets": [asset.as_dict() for asset in ordered],
+        "agentic_visual_review": {
+            "reviewer": os.getenv("QWEN_OMNI_REVIEW_MODEL", "Qwen/Qwen2.5-Omni-7B"),
+            "attempts": max((item.attempt for item in history), default=0),
+            "criteria": (
+                "normalized factual intent and required shot setup; no readable text, malformed subjects, "
+                "generic architecture, collage layout, or cross-shot repetition"
+            ),
+            "reviews": [item.as_dict() for item in history],
+        },
+    }
+    (output_dir / "keyframe-manifest.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _install_v28_reviewed_generator(raw_generate: Any, visual_pipeline: Any) -> None:
+    from .production_visual_quality import KeyframeReview, VisualQualityError
+
+    def reviewed_generate_v28(plan: Any, output_dir: Path) -> tuple[Any, ...]:
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        base_scenes = {scene.scene_index: scene for scene in plan.scenes}
+        current_scenes = {
+            index: _scene_for_attempt(scene, scene_index=index, attempt=1)
+            for index, scene in base_scenes.items()
+        }
+        approved: dict[int, Any] = {}
+        history: list[Any] = []
+        pending = set(base_scenes)
+        last_diversity_failures: dict[int, str] = {}
+
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            attempt_dir = output_dir.parent / f"{output_dir.name}-v28-attempt-{attempt}"
+            if attempt_dir.exists():
+                shutil.rmtree(attempt_dir)
+            subset_plan = replace(
+                plan,
+                scenes=tuple(current_scenes[index] for index in sorted(pending)),
+            )
+            generated = raw_generate(subset_plan, attempt_dir)
+            reviewer = SemanticVisualReviewerV28()
+            try:
+                reviews = []
+                generated_by_index = {asset.scene_index: asset for asset in generated}
+                for index in sorted(pending):
+                    asset = generated_by_index[index]
+                    final_path = output_dir / f"scene-{index:02d}-keyframe.png"
+                    shutil.copy2(asset.path, final_path)
+                    final_asset = replace(asset, path=final_path)
+                    review = reviewer.review(
+                        final_path,
+                        current_scenes[index],
+                        attempt=attempt,
+                        executable_prompt=asset.prompt,
+                    )
+                    reviews.append(review)
+                    if review.decision == "approve":
+                        approved[index] = final_asset
+            finally:
+                reviewer.unload()
+            history.extend(reviews)
+            failed = {item.scene_index: item for item in reviews if item.decision != "approve"}
+
+            if not failed and len(approved) == len(base_scenes):
+                last_diversity_failures = _diversity_failures(approved)
+                for index, reason in last_diversity_failures.items():
+                    failed[index] = KeyframeReview(
+                        scene_index=index,
+                        attempt=attempt,
+                        decision="retry",
+                        claim_alignment=0.69,
+                        coherent_scene=True,
+                        visible_text=False,
+                        prominent_person=False,
+                        device_or_panel=False,
+                        collage_layout=False,
+                        caption_zone_clear=True,
+                        reason=reason,
+                        repair_instruction=_sanitize_repair(reason),
+                    )
+                history.extend(failed.values())
+
+            if not failed and len(approved) == len(base_scenes):
+                _write_combined_manifest(
+                    output_dir=output_dir,
+                    plan=plan,
+                    assets=approved,
+                    history=history,
+                    diversity_failures={},
+                )
+                plan_path = output_dir.parent / "visual-plan.json"
+                plan_path.write_text(json.dumps(plan.as_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+                shutil.rmtree(attempt_dir, ignore_errors=True)
+                return tuple(approved[index] for index in sorted(approved))
+
+            if attempt == _MAX_ATTEMPTS:
+                _write_combined_manifest(
+                    output_dir=output_dir,
+                    plan=plan,
+                    assets=approved,
+                    history=history,
+                    diversity_failures=last_diversity_failures,
+                )
+                summary = "; ".join(
+                    f"scene {index}: {review.reason}" for index, review in sorted(failed.items())
+                )
+                raise VisualQualityError(
+                    f"Keyframes failed v28 semantic/diversity review after {_MAX_ATTEMPTS} attempts: " + summary
+                )
+
+            pending = set(failed)
+            for index, review in failed.items():
+                approved.pop(index, None)
+                current_scenes[index] = _scene_for_attempt(
+                    base_scenes[index],
+                    scene_index=index,
+                    attempt=attempt + 1,
+                    repair=review.repair_instruction,
+                )
+            shutil.rmtree(attempt_dir, ignore_errors=True)
+
+        raise AssertionError("unreachable v28 visual review loop")
+
+    visual_pipeline.generate_keyframes = reviewed_generate_v28
+
+
 def install_production_visual_semantic_review_v28() -> None:
-    """Give v28 visual semantics final authority over legacy object-only review."""
+    """Install bounded semantic generation, fail-closed review, caching, and set diversity."""
     global _INSTALLED
     if _INSTALLED:
         return
 
-    from . import image_generator, production_visual_quality, visual_prompt_compiler
+    from . import image_generator, production_visual_quality, visual_pipeline, visual_prompt_compiler
 
+    raw_generate = image_generator.generate_keyframes
     visual_prompt_compiler.compile_image_prompt = compile_semantic_generation_prompt_v28
     image_generator.compile_image_prompt = compile_semantic_generation_prompt_v28
+    image_generator._caption_safe_zone = _caption_safe_zone_v28
     production_visual_quality._OmniVisualReviewer = SemanticVisualReviewerV28
     production_visual_quality._caption_zone_is_exact_matte = lambda _path: True
+    _install_v28_reviewed_generator(raw_generate, visual_pipeline)
     _INSTALLED = True
