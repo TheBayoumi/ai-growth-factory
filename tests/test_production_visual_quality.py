@@ -34,7 +34,8 @@ class ProductionVisualQualityTests(unittest.TestCase):
         self.assertNotIn("woman", lowered)
         self.assertNotIn("phone", lowered)
         self.assertNotIn("dashboard", lowered)
-        self.assertNotIn("poster", lowered)
+        self.assertNotIn("dashboard poster", lowered)
+        self.assertIn("posters", lowered)
         self.assertIn("collage", result.negative_prompt.casefold())
         self.assertIn("pseudo-text", result.negative_prompt.casefold())
 
