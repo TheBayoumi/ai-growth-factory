@@ -163,6 +163,70 @@ class EditorialTimelineTests(unittest.TestCase):
             )
         )
 
+    def test_63_second_canary_uses_twenty_shots_without_overlong_wan(self) -> None:
+        texts = [
+            "NVIDIA has joined the NSF's State and Regional AI Hubs Program to expand AI research and education.",
+            "The initiative provides access to advanced computing, data, and expertise for AI research.",
+            "This partnership supports the Genesis Mission and helps expand AI infrastructure across the U.S.",
+            "The program will help states and multi-state groups develop AI capabilities.",
+            "NVIDIA's involvement is part of a broader effort to advance AI research and education.",
+            "The program launches today and focuses on creating a national network for AI innovation.",
+            "The initiative ensures that AI research remains accessible to institutions across the country, fostering collaboration and innovation.",
+            "The program also emphasizes the importance of education in preparing the next generation of AI professionals.",
+            "Before adoption, read the linked source and test the claim on a controlled task.",
+            "Track latency, failure rate, human corrections, and repeatability so the decision follows measured behavior rather than a polished announcement.",
+        ]
+        starts = [
+            0.0,
+            7.184916666666666,
+            12.899583333333332,
+            18.862375,
+            23.601458333333333,
+            29.555083333333336,
+            35.493375,
+            42.896166666666666,
+            49.71058333333333,
+            55.666,
+        ]
+        total_duration = 63.58804166666667
+        ends = starts[1:] + [total_duration]
+        segments = tuple(
+            NarrationSegment(
+                segment_id=index,
+                text=text,
+                instruction="test",
+                audio_path=Path(f"failed-canary-{index}.wav"),
+                start_seconds=start,
+                end_seconds=end,
+            )
+            for index, (text, start, end) in enumerate(
+                zip(texts, starts, ends, strict=True)
+            )
+        )
+        profile = VideoProfile()
+        expanded, shots = build_editorial_plan(
+            plan=self._plan(),
+            package=self._package(),
+            segments=segments,
+            total_duration=total_duration,
+            profile=profile,
+        )
+
+        self.assertEqual(len(shots), 20)
+        self.assertEqual(len(expanded.scenes), 20)
+        self.assertAlmostEqual(shots[0].duration_seconds, 3.3, places=5)
+        self.assertLessEqual(shots[0].duration_seconds, profile.maximum_wan_shot_seconds)
+        self.assertEqual(sum(shot.start_seconds < 10.0 for shot in shots), 4)
+        self.assertTrue(
+            all(
+                profile.minimum_shot_seconds <= shot.duration_seconds <= profile.maximum_shot_seconds
+                for shot in shots
+            )
+        )
+        self.assertEqual(sum(shot.renderer == "wan_i2v" for shot in shots), 3)
+        self.assertAlmostEqual(sum(shot.duration_seconds for shot in shots), total_duration, places=4)
+        self.assertEqual([shot.beat_index for shot in shots], [index for index in range(10) for _ in range(2)])
+
 
 if __name__ == "__main__":
     unittest.main()
