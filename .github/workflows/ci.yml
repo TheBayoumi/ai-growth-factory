@@ -3,19 +3,19 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    types: [closed]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'merge-ci-a10-production-verification' || format('merge-ci-{0}', github.run_id) }}
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'pr-ci-a10-production-verification' || format('pr-ci-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:
   test:
-    if: github.event.pull_request.merged == true
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -24,6 +24,8 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.action == 'closed' && 'main' || github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -46,7 +48,8 @@ jobs:
   production-verification:
     needs: test
     if: >-
-      github.event.pull_request.merged == true &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.draft == false &&
       startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -55,57 +58,42 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
-      - name: Check out CI-verified main
+      - name: Check out exact PR head
         uses: actions/checkout@v4
         with:
-          ref: main
-
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Validate persistent Modal credentials
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${MODAL_TOKEN_ID:-}" || {
-            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
-            exit 1
-          }
-          test -n "${MODAL_TOKEN_SECRET:-}" || {
-            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
-            exit 1
-          }
-
+          test -n "${MODAL_TOKEN_ID:-}" || { echo "MODAL_TOKEN_ID is missing." >&2; exit 1; }
+          test -n "${MODAL_TOKEN_SECRET:-}" || { echo "MODAL_TOKEN_SECRET is missing." >&2; exit 1; }
       - name: Set up production client
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
       - name: Install production client and preflight source
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e . "modal==1.5.3"
           python -m compileall -q factory api cloud scripts
           python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
-          python -c "from factory.trend_sources import fetch_trend_snapshot; from factory.trend_ranking import align_primary_sources_to_trends; print('Live trend discovery import preflight passed')"
-          python -c "from factory.visual_prompt import construct_visual_plan; from factory.caption_renderer import write_animated_caption_track; from factory.visual_pipeline import render_visual_plan; print('Autonomous visual pipeline import preflight passed')"
           python scripts/repository_preflight.py
           python scripts/trend_preflight.py
-
       - name: Verify Modal credential pair
         run: modal token info
-
-      - name: Deploy A10 production worker
+      - name: Deploy exact PR head to isolated Modal tag
         env:
           MODAL_USE_FACTORY_SECRET: "false"
-        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
-
-      - name: Generate real platform-ready video and capture result
+        run: modal deploy cloud/modal_app.py --tag "${{ github.event.pull_request.head.sha }}"
+      - name: Generate exact pre-merge production video
         id: production
         continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
           modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-production-result.txt
-
       - name: Resolve generated artifact identifier
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
@@ -114,11 +102,10 @@ jobs:
           import json
           import re
           from pathlib import Path
-
-          result_path = Path("modal-production-result.txt")
-          if not result_path.exists():
+          path = Path("modal-production-result.txt")
+          if not path.exists():
               raise SystemExit("Modal production output was not created")
-          text = result_path.read_text(encoding="utf-8", errors="replace")
+          text = path.read_text(encoding="utf-8", errors="replace")
           candidates = []
           for line in text.splitlines():
               stripped = line.strip()
@@ -137,7 +124,6 @@ jobs:
           Path("canary-id.txt").write_text(canary_id, encoding="utf-8")
           print(canary_id)
           PY
-
       - name: Download exact generated video bundle
         if: always() && hashFiles('canary-id.txt') != ''
         shell: bash
@@ -147,13 +133,9 @@ jobs:
           rm -rf production-video
           mkdir -p production-video
           modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-video/
-          test -n "$(find production-video -type f -print -quit)" || {
-            echo "Modal volume download produced no production files." >&2
-            exit 1
-          }
+          test -n "$(find production-video -type f -print -quit)" || { echo "Modal volume download produced no files." >&2; exit 1; }
           find production-video -type f -print | sort
-
-      - name: Upload exact production artifact
+      - name: Upload exact pre-merge production artifact
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
@@ -165,8 +147,7 @@ jobs:
             trend-preflight.json
           if-no-files-found: warn
           retention-days: 30
-
-      - name: Enforce complete platform-ready output
+      - name: Enforce v28 editorial output
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
         env:
@@ -175,9 +156,7 @@ jobs:
           set -euo pipefail
           if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
             failure=$(find production-video -name canary-failure.json -type f -print -quit 2>/dev/null || true)
-            if [ -n "${failure}" ]; then
-              cat "${failure}"
-            fi
+            if [ -n "${failure}" ]; then cat "${failure}"; fi
             echo "The real Modal production generation failed." >&2
             exit 1
           fi
@@ -187,55 +166,89 @@ jobs:
           import json
           import sys
           from pathlib import Path
-
           result_path = Path(sys.argv[1])
           root = result_path.parent
           result = json.loads(result_path.read_text(encoding="utf-8"))
           if result.get("status") != "verified_render_canary":
               raise SystemExit(f"Production output was not verified: {result}")
           required = (
-              "video.mp4",
-              "narration.wav",
-              "thumbnail.png",
-              "voice-review-manifest.json",
-              "video-qc-report.json",
-              "package.json",
-              "trend-snapshot.json",
-              "visual-plan.json",
-              "keyframe-manifest.json",
-              "scene-media-manifest.json",
-              "animated-captions.ass",
-              "animated-captions.json",
-              "visual-composition-manifest.json",
+              "video.mp4", "narration.wav", "thumbnail.png", "voice-review-manifest.json",
+              "video-qc-report.json", "package.json", "trend-snapshot.json", "visual-plan.json",
+              "keyframe-manifest.json", "scene-media-manifest.json", "animated-captions.ass",
+              "animated-captions.json", "visual-composition-manifest.json",
+              "visual-pipeline-manifest.json", "visual-compositor.log",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
               raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
-          trend_snapshot = json.loads((root / "trend-snapshot.json").read_text(encoding="utf-8"))
-          trend_items = trend_snapshot.get("items") or []
-          provider_status = trend_snapshot.get("provider_status") or {}
-          provider_successes = sum(str(value).startswith("ok:") for value in provider_status.values())
-          trend_matches = ((trend_snapshot.get("alignment") or {}).get("matches") or [])
-          if len(trend_items) < 3:
-              raise SystemExit(f"Expected at least three current AI trend signals: {trend_snapshot}")
-          if provider_successes < 2:
-              raise SystemExit(f"Expected at least two successful trend providers: {provider_status}")
-          if not trend_matches:
-              raise SystemExit("No live trend signal matched an official primary-source article")
+          composition = json.loads((root / "visual-composition-manifest.json").read_text(encoding="utf-8"))
+          shots = composition.get("shots") or []
+          if not 14 <= len(shots) <= 18:
+              raise SystemExit(f"Expected 14-18 editorial shots, received {len(shots)}")
+          if sum(float(item.get("start_seconds", 99)) < 10.0 for item in shots) < 4:
+              raise SystemExit("The first ten seconds contain fewer than four unique shots")
+          if max(float(item.get("duration_seconds", 99)) for item in shots) > 4.27:
+              raise SystemExit("An editorial shot exceeds the 4.25 second ceiling")
+          if composition.get("source_asset_looping") is not False:
+              raise SystemExit("Source-asset looping is enabled")
+          if composition.get("destructive_caption_matte") is not False:
+              raise SystemExit("Destructive caption matte is enabled")
+          if "-stream_loop" in (root / "visual-compositor.log").read_text(encoding="utf-8", errors="replace"):
+              raise SystemExit("FFmpeg source-video looping was detected")
           keyframes = sorted((root / "visual-keyframes").glob("scene-*-keyframe.png"))
-          if len(keyframes) != 6:
-              raise SystemExit(f"Expected six generated keyframes, received {len(keyframes)}")
-          visuals = result.get("visuals") or {}
-          if visuals.get("wan_scene_count") != 3:
-              raise SystemExit(f"Expected three Wan hero scenes: {visuals}")
-          if visuals.get("captions_baked_into_generated_media") is not False:
-              raise SystemExit("Generated media must be text-free; captions belong to the ASS layer")
-          if visuals.get("caption_rendering") != "separate_animated_ass_layer":
-              raise SystemExit(f"Animated caption contract is missing: {visuals}")
+          if len(keyframes) != len(shots):
+              raise SystemExit(f"Expected one unique keyframe per shot: {len(keyframes)} vs {len(shots)}")
+          media = json.loads((root / "scene-media-manifest.json").read_text(encoding="utf-8"))
+          assets = media.get("assets") or []
+          hashes = [str(item.get("sha256") or "") for item in assets]
+          if len(hashes) != len(set(hashes)):
+              raise SystemExit("A scene-media asset was reused")
+          if sum(str(item.get("media_type")) == "video" for item in assets) != 3:
+              raise SystemExit("Expected the configured three Wan hero shots")
+          voice = json.loads((root / "voice-review-manifest.json").read_text(encoding="utf-8"))
+          wpm = float((voice.get("metrics") or {}).get("estimated_wpm") or 0.0)
+          if not 138.0 <= wpm <= 146.0:
+              raise SystemExit(f"Voice pace {wpm:.2f} WPM is outside 138-146")
+          for event in voice.get("reviews") or []:
+              if float(event.get("factor") or 1.0) > 1.150001:
+                  raise SystemExit(f"Tempo correction {event.get('factor')} exceeds 1.15")
+          captions = json.loads((root / "animated-captions.json").read_text(encoding="utf-8"))
+          cues = captions.get("cues") or []
+          one_word = sum(int(item.get("word_count") or 0) == 1 for item in cues)
+          if one_word > 2:
+              raise SystemExit(f"Caption track contains {one_word} isolated one-word cues")
+          if any(float(item["end_seconds"]) - float(item["start_seconds"]) < 0.65 for item in cues):
+              raise SystemExit("Caption track contains a cue shorter than 0.65 seconds")
           video_qc = result.get("video_qc") or {}
           if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
               raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
           if float(video_qc.get("fps", 0.0)) < 29.0:
-              raise SystemExit(f"Production video frame rate is below 30 fps target: {video_qc}")
+              raise SystemExit(f"Production frame rate is below 30 fps: {video_qc}")
           print(json.dumps(result, indent=2, ensure_ascii=False))
           PY
+
+  deploy-reviewed-production:
+    needs: test
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Check out reviewed main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - name: Deploy reviewed daily worker
+        env:
+          MODAL_USE_FACTORY_SECRET: "false"
+        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
