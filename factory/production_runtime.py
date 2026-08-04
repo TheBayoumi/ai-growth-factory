@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v29 convergence is final.
+    """Install production policies in deterministic order; v30 storyboard authority is final.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -51,6 +51,7 @@ def install_production_runtime() -> None:
         install_production_visual_semantic_review_v28,
     )
     from .production_visual_semantics import install_production_visual_semantics
+    from .production_visual_storyboard_v30 import install_production_visual_storyboard_v30
     from .production_voice_bounds_v28 import install_production_voice_bounds_v28
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
     from .production_voice_capacity_v29 import install_production_voice_capacity_v29
@@ -84,9 +85,8 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # The editorial/voice v28 quality contracts remain authoritative. v29 replaces only the
-    # arbitrary segment-count ceiling with narration-size-derived capacity; pace, fidelity,
-    # tempo, and perceptual review remain fail-closed.
+    # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling
+    # with narration-size-derived capacity; pace, fidelity, tempo, and perceptual review remain.
     install_production_editorial_v28()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
@@ -96,19 +96,19 @@ def install_production_runtime() -> None:
     install_production_voice_editorial_pacing_v28()
     install_production_voice_capacity_v29()
 
-    # Visual convergence v29 installs after the v28 review layer so screen-driven directions,
-    # rotating retry targets, and the speed-distilled image backend cannot override physical
-    # story rendering.
+    # Legacy visual adapters install first for compatibility. The configurable v30 storyboard
+    # registry is the final authority for generation prompts, retry targets, and review evidence.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
+    install_production_visual_storyboard_v30()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
     # The final visual pipeline owns stable selective retries, approved-frame caching,
-    # claim-driven physical concepts, and set-level diversity enforcement.
+    # storyboard-driven cross-environment diversity, and set-level perceptual enforcement.
     image_generator.generate_keyframes = visual_pipeline.generate_keyframes
 
     # Bind the CFR-safe compositor proven against mixed image/Wan inputs. This adapter forbids
