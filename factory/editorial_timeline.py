@@ -163,32 +163,11 @@ def _story_beats(
     return beats
 
 
-def _opening_shot_count(beats: list[StoryBeat], counts: list[int]) -> int:
-    total = 0
-    for beat, count in zip(beats, counts, strict=True):
-        step = beat.duration_seconds / count
-        total += sum(beat.start_seconds + step * index < 10.0 for index in range(count))
-    return total
-
-
 def _shot_counts(beats: list[StoryBeat], profile: VideoProfile) -> list[int]:
-    counts = [max(1, math.ceil(beat.duration_seconds / profile.maximum_shot_seconds)) for beat in beats]
-    counts[0] = max(
-        counts[0],
-        math.ceil(beats[0].duration_seconds / profile.maximum_wan_shot_seconds),
-    )
-
-    while _opening_shot_count(beats, counts) < profile.first_ten_seconds_minimum_shots:
-        candidates = [
-            index
-            for index, beat in enumerate(beats)
-            if beat.start_seconds < 10.0
-            and beat.duration_seconds / (counts[index] + 1) >= profile.minimum_shot_seconds
-        ]
-        if not candidates:
-            raise ValueError("Opening cannot satisfy the unique-shot requirement")
-        index = max(candidates, key=lambda item: beats[item].duration_seconds / counts[item])
-        counts[index] += 1
+    counts = [
+        max(1, math.ceil(beat.duration_seconds / profile.maximum_shot_seconds))
+        for beat in beats
+    ]
 
     while sum(counts) < profile.minimum_shots:
         candidates = [
@@ -215,12 +194,170 @@ def _shot_counts(beats: list[StoryBeat], profile: VideoProfile) -> list[int]:
             f"Editorial timeline needs {sum(counts)} shots, above configured maximum "
             f"{profile.maximum_shots}"
         )
-    if any(
-        beat.duration_seconds / count > profile.maximum_shot_seconds + 1e-6
-        for beat, count in zip(beats, counts, strict=True)
-    ):
-        raise ValueError("Editorial timeline contains an overlong shot")
     return counts
+
+
+def _balanced_durations(total: float, count: int) -> list[float]:
+    base = total / count
+    durations = [base] * count
+    durations[-1] = total - sum(durations[:-1])
+    return durations
+
+
+def _move_duration(
+    durations: list[float],
+    *,
+    source_index: int,
+    recipient_indices: Sequence[int],
+    amount: float,
+    profile: VideoProfile,
+) -> bool:
+    if amount <= 1e-9:
+        return True
+    removable = durations[source_index] - profile.minimum_shot_seconds
+    capacity = sum(profile.maximum_shot_seconds - durations[index] for index in recipient_indices)
+    if removable + 1e-9 < amount or capacity + 1e-9 < amount:
+        return False
+    durations[source_index] -= amount
+    remaining = amount
+    for index in recipient_indices:
+        room = profile.maximum_shot_seconds - durations[index]
+        moved = min(room, remaining)
+        durations[index] += moved
+        remaining -= moved
+        if remaining <= 1e-9:
+            break
+    return remaining <= 1e-9
+
+
+def _allocate_durations(
+    beats: list[StoryBeat],
+    counts: list[int],
+    profile: VideoProfile,
+) -> list[list[float]]:
+    while True:
+        allocated = [
+            _balanced_durations(beat.duration_seconds, count)
+            for beat, count in zip(beats, counts, strict=True)
+        ]
+
+        # Only the first source asset is forced to be a Wan clip. Do not apply the Wan ceiling to
+        # every shot in the opening beat; cap the first shot and move the remainder into later
+        # non-Wan shots from the same spoken beat.
+        first = allocated[0]
+        if first[0] > profile.maximum_wan_shot_seconds:
+            if len(first) == 1:
+                can_split = (
+                    sum(counts) < profile.maximum_shots
+                    and beats[0].duration_seconds / 2.0 >= profile.minimum_shot_seconds
+                )
+                if not can_split:
+                    raise ValueError(
+                        "Opening Wan shot cannot fit inside the configured duration bounds"
+                    )
+                counts[0] += 1
+                continue
+            excess = first[0] - profile.maximum_wan_shot_seconds
+            if not _move_duration(
+                first,
+                source_index=0,
+                recipient_indices=tuple(range(1, len(first))),
+                amount=excess,
+                profile=profile,
+            ):
+                raise ValueError(
+                    "Opening Wan shot cannot fit inside the configured duration bounds"
+                )
+
+        # Preserve every spoken-beat boundary while front-loading a small amount of time inside an
+        # opening beat when needed. This creates the required fourth shot before ten seconds without
+        # inventing an extra asset when the existing shot budget can satisfy the requirement.
+        target_start = 10.0 - 0.01
+        restart = False
+        while True:
+            starts: list[tuple[int, int, float]] = []
+            for beat_index, (beat, durations) in enumerate(
+                zip(beats, allocated, strict=True)
+            ):
+                cursor = beat.start_seconds
+                for local_index, duration in enumerate(durations):
+                    starts.append((beat_index, local_index, cursor))
+                    cursor += duration
+            if (
+                sum(start < 10.0 for _, _, start in starts)
+                >= profile.first_ten_seconds_minimum_shots
+            ):
+                break
+
+            candidates: list[tuple[float, int, int]] = []
+            for beat_index, local_index, shot_start in starts:
+                if (
+                    shot_start < 10.0
+                    or local_index == 0
+                    or beats[beat_index].start_seconds >= 10.0
+                ):
+                    continue
+                delta = shot_start - target_start
+                durations = allocated[beat_index]
+                source_index = local_index - 1
+                recipients = tuple(range(local_index, len(durations)))
+                removable = durations[source_index] - profile.minimum_shot_seconds
+                capacity = sum(
+                    profile.maximum_shot_seconds - durations[index]
+                    for index in recipients
+                )
+                if (
+                    delta > 0.0
+                    and removable + 1e-9 >= delta
+                    and capacity + 1e-9 >= delta
+                ):
+                    candidates.append((delta, beat_index, local_index))
+            if candidates:
+                delta, beat_index, local_index = min(candidates)
+                durations = allocated[beat_index]
+                if not _move_duration(
+                    durations,
+                    source_index=local_index - 1,
+                    recipient_indices=tuple(range(local_index, len(durations))),
+                    amount=delta,
+                    profile=profile,
+                ):
+                    raise ValueError("Opening shot-density adjustment could not be applied")
+                continue
+
+            if sum(counts) >= profile.maximum_shots:
+                raise ValueError("Opening cannot satisfy the unique-shot requirement")
+            split_candidates = [
+                index
+                for index, beat in enumerate(beats)
+                if beat.start_seconds < 10.0
+                and beat.duration_seconds / (counts[index] + 1)
+                >= profile.minimum_shot_seconds
+            ]
+            if not split_candidates:
+                raise ValueError("Opening cannot satisfy the unique-shot requirement")
+            index = max(
+                split_candidates,
+                key=lambda item: beats[item].duration_seconds / counts[item],
+            )
+            counts[index] += 1
+            restart = True
+            break
+        if restart:
+            continue
+
+        for beat, durations in zip(beats, allocated, strict=True):
+            if abs(sum(durations) - beat.duration_seconds) > 1e-6:
+                raise ValueError("Editorial duration allocation changed a spoken beat boundary")
+            if any(
+                duration < profile.minimum_shot_seconds - 1e-6
+                or duration > profile.maximum_shot_seconds + 1e-6
+                for duration in durations
+            ):
+                raise ValueError(
+                    "Editorial timeline contains a shot outside the duration bounds"
+                )
+        return allocated
 
 
 def _wan_indices(shots: list[ShotSpec], profile: VideoProfile) -> set[int]:
@@ -230,6 +367,8 @@ def _wan_indices(shots: list[ShotSpec], profile: VideoProfile) -> set[int]:
         for shot in shots[1:]
         if shot.duration_seconds <= profile.maximum_wan_shot_seconds
     ]
+    if shots[0].duration_seconds > profile.maximum_wan_shot_seconds + 1e-6:
+        raise ValueError("The opening Wan shot exceeds its configured duration")
     if len(eligible) < profile.wan_shots - 1:
         raise ValueError("Not enough short shots are available for the configured Wan budget")
     duration = sum(shot.duration_seconds for shot in shots)
@@ -259,17 +398,13 @@ def build_editorial_plan(
         raise ValueError("Narration segments are missing")
     beats = _story_beats(segments, total_duration, package)
     counts = _shot_counts(beats, profile)
+    durations_by_beat = _allocate_durations(beats, counts, profile)
 
     preliminary: list[ShotSpec] = []
     shot_id = 0
-    for beat, count in zip(beats, counts, strict=True):
-        base = beat.duration_seconds / count
-        for local_index in range(count):
-            duration = (
-                beat.duration_seconds - base * (count - 1)
-                if local_index + 1 == count
-                else base
-            )
+    for beat, durations in zip(beats, durations_by_beat, strict=True):
+        cursor = beat.start_seconds
+        for local_index, duration in enumerate(durations):
             scene_index = beat.scene_candidates[local_index % len(beat.scene_candidates)]
             package_scene = package.scenes[scene_index]
             treatment = _TREATMENTS[(beat.beat_id + local_index) % len(_TREATMENTS)]
@@ -282,7 +417,7 @@ def build_editorial_plan(
                     segment_id=beat.segment_id,
                     package_scene_index=scene_index,
                     source_index=package_scene.source_index,
-                    start_seconds=round(beat.start_seconds + base * local_index, 6),
+                    start_seconds=round(cursor, 6),
                     duration_seconds=round(duration, 6),
                     renderer="parallax",
                     semantic_claim=beat.narration_text,
@@ -291,6 +426,7 @@ def build_editorial_plan(
                     seed=seed,
                 )
             )
+            cursor += duration
             shot_id += 1
 
     wan = _wan_indices(preliminary, profile)
