@@ -9,9 +9,9 @@ _INSTALLED = False
 def compact_negative_clip_safe_v31() -> str:
     """Keep the full negative contract inside a conservative SDXL CLIP token budget."""
     return clean(
-        "text, letters, numbers, logo, watermark, screen, poster, chart, collage, empty room, "
-        "empty server aisle, vacant scene, tiny people, robot person, duplicate people, bad anatomy, "
-        "extra limbs, bad hands, broken gear, blurry face, corridor, blocks, orb"
+        "readable text, logo, watermark, screen, collage, empty room, empty server aisle, "
+        "vacant scene, absent people, tiny people, robot person, duplicate people, bad anatomy, "
+        "malformed anatomy, extra limbs, bad hands, broken gear, blurry face, corridor, blocks, orb"
     )
 
 
