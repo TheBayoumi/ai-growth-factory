@@ -64,8 +64,9 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"imageio==2.37.0"', source)
         self.assertIn('"imageio==2.37.0"', project)
-        self.assertIn("import decord, imageio, imageio_ffmpeg", source)
+        self.assertIn("import decord, gptqmodel, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
+        self.assertIn("Voice, GPTQ reviewer, image, and Wan2.2 runtime import preflight passed", source)
 
     def test_runtime_installs_audio_source_visual_and_media_aware_policies(self):
         source = (ROOT / "factory" / "production_runtime.py").read_text(
