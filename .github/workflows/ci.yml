@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'pr-ci-a10-production-verification' || format('pr-ci-{0}', github.event.pull_request.number) }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -62,17 +62,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+
       - name: Validate persistent Modal credentials
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${MODAL_TOKEN_ID:-}" || { echo "MODAL_TOKEN_ID is missing." >&2; exit 1; }
-          test -n "${MODAL_TOKEN_SECRET:-}" || { echo "MODAL_TOKEN_SECRET is missing." >&2; exit 1; }
+          test -n "${MODAL_TOKEN_ID:-}" || {
+            echo "MODAL_TOKEN_ID is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+          test -n "${MODAL_TOKEN_SECRET:-}" || {
+            echo "MODAL_TOKEN_SECRET is missing from the modal-production GitHub environment." >&2
+            exit 1
+          }
+
       - name: Set up production client
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+
       - name: Install production client and preflight source
         run: |
           python -m pip install --upgrade pip
@@ -81,12 +90,15 @@ jobs:
           python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
           python scripts/repository_preflight.py
           python scripts/trend_preflight.py
+
       - name: Verify Modal credential pair
         run: modal token info
+
       - name: Deploy exact PR head to isolated Modal tag
         env:
           MODAL_USE_FACTORY_SECRET: "false"
         run: modal deploy cloud/modal_app.py --tag "${{ github.event.pull_request.head.sha }}"
+
       - name: Generate exact pre-merge production video
         id: production
         continue-on-error: true
@@ -94,6 +106,7 @@ jobs:
         run: |
           set -o pipefail
           modal run cloud/modal_app.py --render-canary 2>&1 | tee modal-production-result.txt
+
       - name: Resolve generated artifact identifier
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
@@ -102,10 +115,11 @@ jobs:
           import json
           import re
           from pathlib import Path
-          path = Path("modal-production-result.txt")
-          if not path.exists():
+
+          result_path = Path("modal-production-result.txt")
+          if not result_path.exists():
               raise SystemExit("Modal production output was not created")
-          text = path.read_text(encoding="utf-8", errors="replace")
+          text = result_path.read_text(encoding="utf-8", errors="replace")
           candidates = []
           for line in text.splitlines():
               stripped = line.strip()
@@ -124,6 +138,7 @@ jobs:
           Path("canary-id.txt").write_text(canary_id, encoding="utf-8")
           print(canary_id)
           PY
+
       - name: Download exact generated video bundle
         if: always() && hashFiles('canary-id.txt') != ''
         shell: bash
@@ -133,8 +148,12 @@ jobs:
           rm -rf production-video
           mkdir -p production-video
           modal volume get --force ai-growth-factory-state "canaries/${canary_id}/" production-video/
-          test -n "$(find production-video -type f -print -quit)" || { echo "Modal volume download produced no files." >&2; exit 1; }
+          test -n "$(find production-video -type f -print -quit)" || {
+            echo "Modal volume download produced no production files." >&2
+            exit 1
+          }
           find production-video -type f -print | sort
+
       - name: Upload exact pre-merge production artifact
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         uses: actions/upload-artifact@v4
@@ -147,6 +166,7 @@ jobs:
             trend-preflight.json
           if-no-files-found: warn
           retention-days: 30
+
       - name: Enforce v28 editorial output
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
@@ -165,39 +185,77 @@ jobs:
           python - "${result_file}" <<'PY'
           import json
           import sys
+          import re
           from pathlib import Path
+
           result_path = Path(sys.argv[1])
           root = result_path.parent
           result = json.loads(result_path.read_text(encoding="utf-8"))
           if result.get("status") != "verified_render_canary":
               raise SystemExit(f"Production output was not verified: {result}")
           required = (
-              "video.mp4", "narration.wav", "thumbnail.png", "voice-review-manifest.json",
-              "video-qc-report.json", "package.json", "trend-snapshot.json", "visual-plan.json",
-              "keyframe-manifest.json", "scene-media-manifest.json", "animated-captions.ass",
+              "video.mp4", "narration.wav", "thumbnail.png",
+              "voice-review-manifest.json", "video-qc-report.json", "package.json",
+              "trend-snapshot.json", "visual-plan.json", "keyframe-manifest.json",
+              "scene-media-manifest.json", "animated-captions.ass",
               "animated-captions.json", "visual-composition-manifest.json",
               "visual-pipeline-manifest.json", "visual-compositor.log",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
               raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
+
           composition = json.loads((root / "visual-composition-manifest.json").read_text(encoding="utf-8"))
           shots = composition.get("shots") or []
-          if not 14 <= len(shots) <= 18:
-              raise SystemExit(f"Expected 14-18 editorial shots, received {len(shots)}")
+          if not 14 <= len(shots) <= 20:
+              raise SystemExit(f"Expected 14-20 editorial shots, received {len(shots)}")
           if sum(float(item.get("start_seconds", 99)) < 10.0 for item in shots) < 4:
               raise SystemExit("The first ten seconds contain fewer than four unique shots")
           if max(float(item.get("duration_seconds", 99)) for item in shots) > 4.27:
               raise SystemExit("An editorial shot exceeds the 4.25 second ceiling")
+          required_shot_fields = (
+              "shot_id", "beat_index", "segment_id", "package_scene_index", "semantic_claim"
+          )
+          if any(any(field not in item for field in required_shot_fields) for item in shots):
+              raise SystemExit("Editorial shot-to-narration identity fields are incomplete")
+          if [int(item["shot_id"]) for item in shots] != list(range(len(shots))):
+              raise SystemExit("Editorial shot IDs are not contiguous")
+          visual_plan = json.loads((root / "visual-plan.json").read_text(encoding="utf-8"))
+          visual_scenes = sorted(
+              visual_plan.get("scenes") or [],
+              key=lambda item: int(item.get("scene_index", -1)),
+          )
+          if len(visual_scenes) != len(shots):
+              raise SystemExit("Visual plan does not contain exactly one scene per editorial shot")
+          for shot, scene in zip(shots, visual_scenes, strict=True):
+              claim = " ".join(str(shot.get("semantic_claim") or "").split()).casefold()
+              prompt = " ".join(str(scene.get("image_prompt") or "").split()).casefold()
+              if not claim or claim not in prompt:
+                  raise SystemExit(
+                      f"Shot {shot.get('shot_id')} is not aligned to its exact spoken claim"
+                  )
+          package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+          narration = " ".join(str(package.get("narration") or "").split())
+          if re.search(
+              r"\b(?:fostering|enabling|supporting|driving|advancing|encouraging)\s+"
+              r"(?:continued|ongoing|further)\s+[A-Z][^.?!]{8,}",
+              narration,
+          ):
+              raise SystemExit("Narration contains a malformed pasted-title transition")
           if composition.get("source_asset_looping") is not False:
               raise SystemExit("Source-asset looping is enabled")
           if composition.get("destructive_caption_matte") is not False:
               raise SystemExit("Destructive caption matte is enabled")
-          if "-stream_loop" in (root / "visual-compositor.log").read_text(encoding="utf-8", errors="replace"):
+          if "-stream_loop" in (root / "visual-compositor.log").read_text(
+              encoding="utf-8", errors="replace"
+          ):
               raise SystemExit("FFmpeg source-video looping was detected")
+
           keyframes = sorted((root / "visual-keyframes").glob("scene-*-keyframe.png"))
           if len(keyframes) != len(shots):
-              raise SystemExit(f"Expected one unique keyframe per shot: {len(keyframes)} vs {len(shots)}")
+              raise SystemExit(
+                  f"Expected one unique keyframe per shot: {len(keyframes)} vs {len(shots)}"
+              )
           media = json.loads((root / "scene-media-manifest.json").read_text(encoding="utf-8"))
           assets = media.get("assets") or []
           hashes = [str(item.get("sha256") or "") for item in assets]
@@ -205,20 +263,27 @@ jobs:
               raise SystemExit("A scene-media asset was reused")
           if sum(str(item.get("media_type")) == "video" for item in assets) != 3:
               raise SystemExit("Expected the configured three Wan hero shots")
+
           voice = json.loads((root / "voice-review-manifest.json").read_text(encoding="utf-8"))
           wpm = float((voice.get("metrics") or {}).get("estimated_wpm") or 0.0)
           if not 138.0 <= wpm <= 146.0:
               raise SystemExit(f"Voice pace {wpm:.2f} WPM is outside 138-146")
           for event in voice.get("reviews") or []:
-              if float(event.get("factor") or 1.0) > 1.150001:
-                  raise SystemExit(f"Tempo correction {event.get('factor')} exceeds 1.15")
+              factor = float(event.get("factor") or 1.0)
+              if factor > 1.150001:
+                  raise SystemExit(f"Tempo correction {factor:.3f} exceeds 1.15")
+
           captions = json.loads((root / "animated-captions.json").read_text(encoding="utf-8"))
           cues = captions.get("cues") or []
           one_word = sum(int(item.get("word_count") or 0) == 1 for item in cues)
           if one_word > 2:
               raise SystemExit(f"Caption track contains {one_word} isolated one-word cues")
-          if any(float(item["end_seconds"]) - float(item["start_seconds"]) < 0.65 for item in cues):
+          if any(
+              float(item["end_seconds"]) - float(item["start_seconds"]) < 0.65
+              for item in cues
+          ):
               raise SystemExit("Caption track contains a cue shorter than 0.65 seconds")
+
           video_qc = result.get("video_qc") or {}
           if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
               raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
