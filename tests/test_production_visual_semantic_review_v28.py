@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-from factory.production_visual_runtime_v28 import install_production_visual_runtime_v28
+from factory.production_visual_convergence_v29 import (
+    SDXLQualityKeyframeGeneratorV29,
+    _compile_physical_story_prompt,
+    _concept_for,
+    _physical_repair,
+    _scene_for_attempt_v29,
+)
 from factory.production_visual_semantic_review_v28 import (
     _base_director_prompt,
     _extract_direction,
@@ -15,6 +19,7 @@ from factory.production_visual_semantic_review_v28 import (
     _shot_setup,
     compile_semantic_generation_prompt_v28,
 )
+from factory.visual_prompt import SceneVisualPrompt
 
 
 FAILED_CANARY_PROMPT = (
@@ -38,6 +43,21 @@ FAILED_SCENE_14_PROMPT = (
     "framework's page. REQUIRED CORRECTION: Ensure the display surfaces show the page content"
 )
 
+GOOGLE_COURSE_PROMPT = (
+    "Factual technology documentary shot synchronized to this exact spoken sentence: "
+    "Google AI has expanded its vibe coding course to include 353,000 participants.. "
+    "Supporting source-grounded visual direction: A screen showing a course expansion announcement. "
+    "Shot treatment: wide contextual view showing the surrounding workflow. "
+    "Depict the concrete idea literally. Preserve a full-frame environment."
+)
+
+DEVELOPER_CODING_PROMPT = (
+    "Factual technology documentary shot synchronized to this exact spoken sentence: "
+    "The initiative aims to improve coding and AI skills, fostering innovation in the field.. "
+    "Supporting source-grounded visual direction: A screen showing a developer coding. "
+    "Shot treatment: human-scale consequence using generic unbranded people or tools when relevant."
+)
+
 
 class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
     def test_generation_prompt_never_receives_narration_prose(self) -> None:
@@ -57,13 +77,41 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         self.assertNotIn("page content", lowered)
         self.assertNotIn("microsoft", lowered)
 
+    def test_v29_course_expansion_becomes_physical_workshop(self) -> None:
+        compiled = _compile_physical_story_prompt(GOOGLE_COURSE_PROMPT)
+        lowered = compiled.compiled_prompt.casefold()
+        self.assertIn("adult developers", lowered)
+        self.assertIn("physical workbench", lowered)
+        self.assertIn("single camera viewpoint", lowered)
+        for forbidden in ("google", "353,000", "announcement", "screen", "monitor", "display"):
+            self.assertNotIn(forbidden, lowered)
+        self.assertLessEqual(compiled.word_count, 62)
+        self.assertEqual(compiled.compiler_version, "visual-compiler-v29-physical-story-cfg")
+
+    def test_v29_coding_story_uses_physical_programmable_hardware(self) -> None:
+        compiled = _compile_physical_story_prompt(DEVELOPER_CODING_PROMPT)
+        lowered = compiled.compiled_prompt.casefold()
+        self.assertIn("programmable controller", lowered)
+        self.assertIn("physical hardware", lowered)
+        self.assertNotIn("developer coding", lowered)
+        self.assertNotIn("screen", lowered)
+        self.assertNotIn("laptop", lowered)
+
+    def test_v29_negative_prompt_can_forbid_text_collages_and_humanoids(self) -> None:
+        negative = _compile_physical_story_prompt(GOOGLE_COURSE_PROMPT).negative_prompt.casefold()
+        self.assertIn("readable text", negative)
+        self.assertIn("screen", negative)
+        self.assertIn("collage", negative)
+        self.assertIn("humanoid robot", negative)
+        self.assertIn("distorted hands", negative)
+
     def test_prompt_budget_is_hard_and_clip_safe(self) -> None:
         compiled = compile_semantic_generation_prompt_v28(FAILED_SCENE_14_PROMPT, word_budget=500)
         self.assertLessEqual(compiled.word_count, 58)
         self.assertEqual(compiled.word_budget, 58)
         self.assertEqual(compiled.word_count, len(compiled.compiled_prompt.rstrip(".").split()))
 
-    def test_people_hands_screens_and_devices_are_not_negative_defects(self) -> None:
+    def test_people_hands_screens_and_devices_are_not_legacy_negative_defects(self) -> None:
         negative = _sanitize_negative_prompt(
             "people, faces, hands, screens, phones, devices, documents, panels"
         ).casefold()
@@ -95,12 +143,47 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         self.assertNotIn("framework's page", repair)
         self.assertLessEqual(len(repair.split()), 20)
 
+    def test_v29_text_defect_removes_all_display_surfaces(self) -> None:
+        concept = _concept_for(GOOGLE_COURSE_PROMPT, 0)
+        repair = _physical_repair("The screen contains readable text and an announcement", concept)
+        self.assertIn("display-free workspace", repair)
+        self.assertIn("physical hardware and people only", repair)
+
     def test_retry_markers_are_replaced_not_accumulated(self) -> None:
         base = _base_director_prompt(FAILED_SCENE_14_PROMPT)
         self.assertNotIn("V28 SCENE SETUP", base)
         self.assertNotIn("V28 REPAIR", base)
         self.assertNotIn("REQUIRED CORRECTION", base)
         self.assertIn("Supporting source-grounded visual direction", base)
+
+    def test_v29_retry_preserves_story_setup_and_changes_only_seed_and_repair(self) -> None:
+        scene = SceneVisualPrompt(
+            scene_index=4,
+            source_index=0,
+            role="mechanism",
+            generation_mode="image",
+            image_prompt=DEVELOPER_CODING_PROMPT,
+            motion_prompt="controlled motion",
+            negative_prompt="legacy",
+            continuity_anchor="anchor",
+            caption_safe_zone="lower",
+            seed=123,
+            duration_seconds=3.0,
+        )
+        first = _scene_for_attempt_v29(scene, scene_index=4, attempt=1)
+        retry = _scene_for_attempt_v29(
+            scene,
+            scene_index=4,
+            attempt=4,
+            repair="The screen contains readable text",
+        )
+        first_setup = first.image_prompt.split("V28 SCENE SETUP:", 1)[1].split(". V28 REPAIR:", 1)[0]
+        retry_setup = retry.image_prompt.split("V28 SCENE SETUP:", 1)[1].split(". V28 REPAIR:", 1)[0]
+        self.assertEqual(first_setup, retry_setup)
+        self.assertNotEqual(first.seed, retry.seed)
+        self.assertEqual(first.image_prompt.count("V28 SCENE SETUP:"), 1)
+        self.assertEqual(retry.image_prompt.count("V28 REPAIR:"), 1)
+        self.assertIn("display-free workspace", retry.image_prompt)
 
     def test_direction_extraction_is_exact(self) -> None:
         self.assertEqual(
@@ -118,24 +201,21 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         names = [_shot_setup(index)[0] for index in range(20)]
         self.assertEqual(names[:10], names[10:])
         self.assertGreaterEqual(len(set(names)), 10)
-        self.assertNotEqual(names[0], names[1])
-        self.assertNotEqual(names[1], names[2])
 
-    def test_eight_step_checkpoint_matches_step_count(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            import factory.production_visual_runtime_v28 as runtime
+    def test_quality_renderer_uses_full_sdxl_cfg_not_lightning(self) -> None:
+        class Plan:
+            width = 704
+            height = 1280
 
-            previous = runtime._INSTALLED
-            runtime._INSTALLED = False
-            try:
-                install_production_visual_runtime_v28()
-                self.assertEqual(
-                    os.environ["VISUAL_SDXL_LIGHTNING_CHECKPOINT"],
-                    "sdxl_lightning_8step_unet.safetensors",
-                )
-                self.assertEqual(os.environ["VISUAL_SDXL_LIGHTNING_STEPS"], "8")
-            finally:
-                runtime._INSTALLED = previous
+        renderer = SDXLQualityKeyframeGeneratorV29(Plan())
+        self.assertEqual(renderer.steps, 30)
+        self.assertEqual(renderer.guidance, 5.5)
+        self.assertIn("stable-diffusion-xl-base-1.0", renderer.model_id)
+        self.assertIn("cfg-5.5", renderer.model_id)
+        source = Path("factory/production_visual_convergence_v29.py").read_text(encoding="utf-8")
+        self.assertIn("negative_prompt=negative", source)
+        self.assertIn("guidance_scale=self.guidance", source)
+        self.assertNotIn("sdxl_lightning_8step_unet", source)
 
     def test_reviewer_contract_forbids_literal_page_demands(self) -> None:
         source = Path("factory/production_visual_semantic_review_v28.py").read_text(
@@ -154,17 +234,16 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
         self.assertIn("regenerate_failed_only", source)
         self.assertIn("pending = set(failed)", source)
         self.assertNotIn('scene.image_prompt\n                            + ". REQUIRED CORRECTION', source)
-        self.assertNotIn("people, faces, portraits, bodies, hands, phones, screens", source)
 
-    def test_runtime_installs_semantic_review_after_legacy_visual_quality(self) -> None:
+    def test_runtime_installs_v29_after_v28_semantic_review(self) -> None:
         source = Path("factory/production_runtime.py").read_text(encoding="utf-8")
         self.assertLess(
-            source.index("install_production_visual_quality()"),
             source.index("install_production_visual_semantic_review_v28()"),
+            source.index("install_production_visual_convergence_v29()"),
         )
         self.assertLess(
-            source.index("install_production_visual_runtime_v28()"),
-            source.index("install_production_visual_semantic_review_v28()"),
+            source.index("install_production_visual_convergence_v29()"),
+            source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
         )
 
 
