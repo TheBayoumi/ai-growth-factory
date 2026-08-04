@@ -40,6 +40,7 @@ def install_production_runtime() -> None:
     from .production_video_qc import install_production_video_qc
     from .production_visual_quality import install_production_visual_quality
     from .production_visual_routing import install_production_visual_routing
+    from .production_visual_runtime_v28 import install_production_visual_runtime_v28
     from .production_visual_semantic_review_v28 import (
         install_production_visual_semantic_review_v28,
     )
@@ -85,6 +86,7 @@ def install_production_runtime() -> None:
     install_production_qwen_omni_bitsandbytes_v28()
     install_production_voice_convergence_v28()
     install_production_voice_editorial_pacing_v28()
+    install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
