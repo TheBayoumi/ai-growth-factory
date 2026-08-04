@@ -40,6 +40,9 @@ def install_production_runtime() -> None:
     from .production_video_qc import install_production_video_qc
     from .production_visual_quality import install_production_visual_quality
     from .production_visual_routing import install_production_visual_routing
+    from .production_visual_semantic_review_v28 import (
+        install_production_visual_semantic_review_v28,
+    )
     from .production_visual_semantics import install_production_visual_semantics
     from .production_voice_bounds_v28 import install_production_voice_bounds_v28
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
@@ -82,13 +85,13 @@ def install_production_runtime() -> None:
     install_production_qwen_omni_bitsandbytes_v28()
     install_production_voice_convergence_v28()
     install_production_voice_editorial_pacing_v28()
+    install_production_visual_semantic_review_v28()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
-    # The legacy visual-quality adapter wraps visual_pipeline.generate_keyframes. Bind the
-    # image-generator entry point used by v28 to that reviewed/regenerating implementation so
-    # every editorial shot is still reviewed by Qwen before composition.
+    # The legacy keyframe loop remains responsible for retry orchestration, while the final
+    # v28 compiler and semantic reviewer own what is generated and what may be approved.
     image_generator.generate_keyframes = visual_pipeline.generate_keyframes
 
     # Bind the CFR-safe compositor proven against mixed image/Wan inputs. This adapter forbids
