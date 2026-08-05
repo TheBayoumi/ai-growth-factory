@@ -25,8 +25,6 @@ class _ConservativeTokenizer:
 
     def __call__(self, value: str, **_kwargs: object) -> dict[str, list[int]]:
         words = len(value.split())
-        # The failed canary expanded a 48-word negative prompt to 90 CLIP tokens while its
-        # subject-first positive prompt expanded from 52 words to 59. Model both observed ratios.
         count = words + 7 if value.startswith("Photorealistic") else words * 2 + 2
         return {"input_ids": list(range(count))}
 
@@ -37,11 +35,14 @@ class _ConservativePipeline:
 
 
 class VisualClipBudgetV31Tests(unittest.TestCase):
-    def test_package_boundary_replaces_the_legacy_negative_contract(self) -> None:
+    def test_package_boundary_installs_the_text_resistant_compact_contract(self) -> None:
         self.assertEqual(_compact_negative(), compact_negative_clip_safe_v31())
         self.assertLessEqual(len(_words(_compact_negative())), 36)
         self.assertNotIn("architecture-only", _compact_negative())
-        self.assertNotIn("pseudo-text", _compact_negative())
+        self.assertIn("pseudo-text", _compact_negative())
+        self.assertIn("gibberish", _compact_negative())
+        self.assertIn("printed label", _compact_negative())
+        self.assertNotIn("absent people", _compact_negative())
 
     def test_compact_negative_passes_a_conservative_two_token_per_word_budget(self) -> None:
         director = (
@@ -69,14 +70,14 @@ class VisualClipBudgetV31Tests(unittest.TestCase):
     def test_high_value_defects_remain_in_the_compact_contract(self) -> None:
         negative = compact_negative_clip_safe_v31()
         for required in (
-            "text",
-            "empty room",
-            "empty server aisle",
+            "readable text",
+            "pseudo-text",
+            "gibberish",
+            "printed label",
             "vacant scene",
-            "tiny people",
-            "bad anatomy",
+            "malformed anatomy",
             "bad hands",
-            "broken gear",
+            "warped equipment",
             "corridor",
         ):
             self.assertIn(required, negative)
