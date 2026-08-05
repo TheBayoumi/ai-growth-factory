@@ -153,7 +153,7 @@ class ProductionVoiceClauseFallbackV33Tests(unittest.TestCase):
             self.assertEqual(payload["status"], "voice_clause_fallback_failed_closed")
             self.assertEqual(payload["text"], text)
             self.assertEqual(len(payload["clauses"]), 2)
-            self.assertIn("bounded clause fallback", payload["fallback_error"].casefold())
+            self.assertIn("no candidate reachable", payload["fallback_error"].casefold())
 
 
 if __name__ == "__main__":
