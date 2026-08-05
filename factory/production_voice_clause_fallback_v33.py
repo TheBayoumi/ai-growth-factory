@@ -5,7 +5,7 @@ import re
 import shutil
 import wave
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Sequence
 
 from .video_profile import VideoProfile
 
@@ -46,7 +46,9 @@ def split_sentence_for_clause_fallback_v33(text: str) -> tuple[str, ...]:
         punctuation_priority = 0 if previous.endswith((",", ";", ":")) else 1
         connector_priority = 0 if current in _CONNECTORS else 1
         if punctuation_priority == 0 or connector_priority == 0:
-            candidates.append((punctuation_priority + connector_priority, abs(index - midpoint), index))
+            candidates.append(
+                (punctuation_priority + connector_priority, abs(index - midpoint), index)
+            )
 
     if candidates:
         split_at = min(candidates)[2]
@@ -176,6 +178,7 @@ def build_clause_fallback_tts_class_v33(
                 raise qwen_tts.QwenTTSError(trigger)
 
             temporary_paths: list[Path] = []
+            compacted_paths: list[Path] = []
             clause_details: list[dict[str, object]] = []
             joined = output_path.with_name(f"{output_path.stem}-clause-joined{output_path.suffix}")
             try:
@@ -206,7 +209,11 @@ def build_clause_fallback_tts_class_v33(
                         maximum_internal_silence_ms=180,
                         maximum_edge_silence_ms=20,
                     )
-                    observed = len(clause.split()) / max(float(compaction["after_seconds"]), 0.001) * 60.0
+                    observed = (
+                        len(clause.split())
+                        / max(float(compaction["after_seconds"]), 0.001)
+                        * 60.0
+                    )
                     if not calibration.segment_candidate_reachable_v28(
                         observed,
                         profile=profile,
@@ -215,6 +222,7 @@ def build_clause_fallback_tts_class_v33(
                             f"Clause {index + 1} remained unreachable at {observed:.2f} WPM"
                         )
                     temporary_paths.extend((raw_clause, compacted_clause))
+                    compacted_paths.append(compacted_clause)
                     clause_details.append(
                         {
                             "clause_index": index,
@@ -226,18 +234,18 @@ def build_clause_fallback_tts_class_v33(
                         }
                     )
 
-                join_pcm_wavs_v33(
-                    [output_path.with_name(f"{output_path.stem}-clause-{index + 1}-compacted{output_path.suffix}") for index in range(len(clauses))],
-                    joined,
-                    pause_ms=120,
-                )
+                join_pcm_wavs_v33(compacted_paths, joined, pause_ms=120)
                 final_compaction = calibration.compact_excess_silence_v28(
                     joined,
                     output_path,
                     maximum_internal_silence_ms=180,
                     maximum_edge_silence_ms=40,
                 )
-                combined_wpm = len(text.split()) / max(float(final_compaction["after_seconds"]), 0.001) * 60.0
+                combined_wpm = (
+                    len(text.split())
+                    / max(float(final_compaction["after_seconds"]), 0.001)
+                    * 60.0
+                )
                 if not calibration.segment_candidate_reachable_v28(
                     combined_wpm,
                     profile=profile,
@@ -288,11 +296,24 @@ def install_production_voice_clause_fallback_v33() -> None:
     if _INSTALLED:
         return
 
-    from . import voice_pipeline
+    from . import canary, voice_pipeline
 
     profile = VideoProfile.from_env()
     voice_pipeline.Qwen3TTS = build_clause_fallback_tts_class_v33(
         voice_pipeline.Qwen3TTS,
         profile=profile,
     )
+
+    original_copy_voice_diagnostics = canary._copy_voice_diagnostics
+
+    def copy_voice_diagnostics_with_calibration_failure(
+        workdir: Path,
+        destination: Path,
+    ) -> None:
+        failure = workdir / "voice-calibration-failure.json"
+        if failure.is_file():
+            canary._copy(failure, destination, "voice-calibration-failure.json")
+        original_copy_voice_diagnostics(workdir, destination)
+
+    canary._copy_voice_diagnostics = copy_voice_diagnostics_with_calibration_failure
     _INSTALLED = True
