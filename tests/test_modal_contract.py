@@ -66,11 +66,12 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("state_volume.commit()", self.source)
         self.assertIn("hf_cache.commit()", self.source)
 
-    def test_production_is_gated_on_both_merge_ci_matrix_jobs(self):
+    def test_pre_merge_production_is_gated_on_both_ci_matrix_jobs(self):
         self.assertIn("production-verification:", self.workflow)
         self.assertIn("needs: test", self.workflow)
         self.assertIn('python-version: ["3.12", "3.13"]', self.workflow)
-        self.assertIn("github.event.pull_request.merged == true", self.workflow)
+        self.assertIn("github.event.action != 'closed'", self.workflow)
+        self.assertIn("github.event.pull_request.draft == false", self.workflow)
         self.assertIn("startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')", self.workflow)
         self.assertFalse(DUPLICATE_PRODUCTION_WORKFLOW.exists())
 
@@ -81,16 +82,18 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("modal token new", self.workflow)
         self.assertNotIn("Authorize Modal in browser", self.workflow)
 
-    def test_production_runs_after_verified_checkout(self):
-        self.assertIn("Check out CI-verified main", self.workflow)
-        self.assertIn("Autonomous visual pipeline import preflight passed", self.workflow)
-        self.assertIn("Deploy A10 production worker", self.workflow)
-        self.assertIn("Generate real platform-ready video and capture result", self.workflow)
+    def test_production_runs_from_the_exact_verified_pr_head(self):
+        self.assertIn("Check out exact PR head", self.workflow)
+        self.assertIn('ref: ${{ github.event.pull_request.head.sha }}', self.workflow)
+        self.assertIn("Production runtime import preflight passed", self.workflow)
+        self.assertIn("Deploy exact PR head to isolated Modal tag", self.workflow)
+        self.assertIn("Generate exact pre-merge production video", self.workflow)
+        self.assertNotIn("Check out CI-verified main", self.workflow)
         test_index = self.workflow.index("Unit and integration tests")
         production_index = self.workflow.index("production-verification:")
         self.assertLess(test_index, production_index)
 
-    def test_output_bundle_is_downloaded_and_enforced(self):
+    def test_output_bundle_is_downloaded_and_profile_contract_is_enforced(self):
         self.assertIn("rm -rf production-video", self.workflow)
         self.assertIn("mkdir -p production-video", self.workflow)
         self.assertIn(
@@ -110,13 +113,19 @@ class ModalContractTests(unittest.TestCase):
             "animated-captions.ass",
             "animated-captions.json",
             "visual-composition-manifest.json",
+            "visual-pipeline-manifest.json",
+            "visual-compositor.log",
         ):
             with self.subTest(name=name):
                 self.assertIn(f'"{name}"', self.workflow)
+        self.assertIn('contract = composition.get("editorial_contract") or {}', self.workflow)
+        self.assertIn('required_wan_shots = int(contract["wan_shots"])', self.workflow)
+        self.assertIn('actual_wan_shots != required_wan_shots', self.workflow)
+        self.assertIn('realized_shot_count', self.workflow)
+        self.assertIn('realized_wan_shots', self.workflow)
         self.assertIn('video_qc.get("width") != 1080', self.workflow)
         self.assertIn('video_qc.get("height") != 1920', self.workflow)
-        self.assertIn('visuals.get("wan_scene_count") != 3', self.workflow)
-        self.assertIn('captions_baked_into_generated_media', self.workflow)
+        self.assertNotIn('visuals.get("wan_scene_count") != 3', self.workflow)
 
     def test_failed_generation_still_uploads_diagnostics(self):
         guard = "steps.production.outcome == 'success' || steps.production.outcome == 'failure'"

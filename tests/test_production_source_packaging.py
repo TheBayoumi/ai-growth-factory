@@ -35,29 +35,31 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         missing = [name for name in required if not (ROOT / "factory" / name).is_file()]
         self.assertEqual(missing, [])
 
-    def test_gpu_workflow_imports_runtime_before_deployment(self):
+    def test_gpu_workflow_installs_complete_runtime_before_exact_head_deployment(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        runtime = (ROOT / "factory" / "production_runtime.py").read_text(
             encoding="utf-8"
         )
         production_preflight = (
             "from factory.production_runtime import install_production_runtime; "
             "install_production_runtime()"
         )
-        visual_preflight = (
-            "from factory.visual_prompt import construct_visual_plan; "
-            "from factory.caption_renderer import write_animated_caption_track; "
-            "from factory.visual_pipeline import render_visual_plan"
-        )
+        deploy_step = "Deploy exact PR head to isolated Modal tag"
         self.assertIn(production_preflight, workflow)
-        self.assertIn(visual_preflight, workflow)
+        self.assertIn(deploy_step, workflow)
         self.assertLess(
             workflow.index("Production runtime import preflight passed"),
-            workflow.index("Deploy A10 production worker"),
+            workflow.index(deploy_step),
         )
-        self.assertLess(
-            workflow.index("Autonomous visual pipeline import preflight passed"),
-            workflow.index("Deploy A10 production worker"),
-        )
+        for visual_authority in (
+            "install_production_visual_routing",
+            "install_production_visual_semantics",
+            "install_production_visual_quality",
+        ):
+            with self.subTest(visual_authority=visual_authority):
+                self.assertIn(visual_authority, runtime)
 
     def test_modal_worker_pins_and_preflights_wan_exporter(self):
         source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
