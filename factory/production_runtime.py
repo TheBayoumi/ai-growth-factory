@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v34 is final visual authority.
+    """Install production policies in deterministic order; v35 is final visual retry authority.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -48,6 +48,9 @@ def install_production_runtime() -> None:
         install_production_visual_prompt_cleanup_v29,
     )
     from .production_visual_quality import install_production_visual_quality
+    from .production_visual_retry_grounding_v35 import (
+        install_production_visual_retry_grounding_v35,
+    )
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_runtime_v28 import install_production_visual_runtime_v28
     from .production_visual_semantic_review_v28 import (
@@ -107,8 +110,8 @@ def install_production_runtime() -> None:
     install_production_voice_clause_fallback_v33()
 
     # Legacy visual adapters install first for compatibility. v30 owns the registry/reviewer, v31
-    # owns subject-first CLIP-safe compilation, and v34 finally enforces atomic controlled-test
-    # targets, text-resistant equipment, and retry instructions that do not invent people.
+    # owns subject-first CLIP-safe compilation, v34 enforces atomic controlled-test targets, and
+    # v35 finally keeps exact storyboard requirements in reviewer-driven scene regeneration.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
@@ -116,6 +119,7 @@ def install_production_runtime() -> None:
     install_production_visual_storyboard_v30()
     install_production_visual_subject_authority_v31()
     install_production_visual_atomic_storyboard_v34()
+    install_production_visual_retry_grounding_v35()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
