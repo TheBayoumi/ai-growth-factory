@@ -58,6 +58,9 @@ def install_production_runtime() -> None:
     from .production_voice_bounds_v28 import install_production_voice_bounds_v28
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
     from .production_voice_capacity_v29 import install_production_voice_capacity_v29
+    from .production_voice_clause_fallback_v33 import (
+        install_production_voice_clause_fallback_v33,
+    )
     from .production_voice_convergence_v28 import install_production_voice_convergence_v28
     from .production_voice_editorial_pacing_v28 import (
         install_production_voice_editorial_pacing_v28,
@@ -88,8 +91,9 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling
-    # with narration-size-derived capacity; pace, fidelity, tempo, and perceptual review remain.
+    # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling;
+    # v33 adds a bounded clause-level recovery path only after full-sentence convergence is
+    # exhausted. Pace, fidelity, tempo, transcript identity, and perceptual review remain strict.
     install_production_editorial_v28()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
@@ -98,6 +102,7 @@ def install_production_runtime() -> None:
     install_production_voice_convergence_v28()
     install_production_voice_editorial_pacing_v28()
     install_production_voice_capacity_v29()
+    install_production_voice_clause_fallback_v33()
 
     # Legacy visual adapters install first for compatibility. v30 owns the storyboard registry and
     # evidence reviewer; v31 is the final generation authority for subject-first prompts, effective
