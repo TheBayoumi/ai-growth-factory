@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v35 is final visual retry authority.
+    """Install production policies in deterministic order; v37 is final visual authority.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -19,6 +19,9 @@ def install_production_runtime() -> None:
     from .production_caption_zone import install_production_caption_zone
     from .production_content import install_production_content_gate
     from .production_editorial_v28 import install_production_editorial_v28
+    from .production_editorial_wan_allocator_v38 import (
+        install_production_editorial_wan_allocator_v38,
+    )
     from .production_narration_integrity_v28 import install_production_narration_integrity_v28
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
@@ -100,6 +103,7 @@ def install_production_runtime() -> None:
     # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling;
     # v33 adds bounded clause-level recovery only after full-sentence convergence is exhausted.
     install_production_editorial_v28()
+    install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
     install_production_voice_runtime_v28()
@@ -111,7 +115,7 @@ def install_production_runtime() -> None:
 
     # Legacy visual adapters install first for compatibility. v30 owns the registry/reviewer, v31
     # owns subject-first CLIP-safe compilation, v34 enforces atomic controlled-test targets, and
-    # v35 finally keeps exact storyboard requirements in reviewer-driven scene regeneration.
+    # v35 installs the v36/v37 Codex scene-contract and reviewer-feedback authorities.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
