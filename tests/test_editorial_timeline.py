@@ -223,7 +223,9 @@ class EditorialTimelineTests(unittest.TestCase):
                 for shot in shots
             )
         )
-        self.assertEqual(sum(shot.renderer == "wan_i2v" for shot in shots), 3)
+        wan_shots = [shot for shot in shots if shot.renderer == "wan_i2v"]
+        self.assertEqual(len(wan_shots), profile.wan_shots)
+        self.assertEqual(wan_shots[0].shot_id, 0)
         self.assertAlmostEqual(sum(shot.duration_seconds for shot in shots), total_duration, places=4)
         self.assertEqual([shot.beat_index for shot in shots], [index for index in range(10) for _ in range(2)])
 
