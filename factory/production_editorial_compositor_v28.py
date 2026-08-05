@@ -9,6 +9,7 @@ import imageio_ffmpeg
 
 from .editorial_timeline import ShotSpec
 from .models import NarrationSegment, VideoPackage
+from .video_profile import VideoProfile
 
 
 _TRANSITION_SECONDS = 0.16
@@ -35,16 +36,22 @@ def compose_editorial_video_v28(
 
     Every input is normalized to a constant 1/fps timebase before xfade. Image shots receive
     deterministic Ken Burns motion. Wan shots may be padded only by the crossfade duration,
-    never replayed. The subtitle result is forced back to yuv420p so H.264 High Profile is
-    deterministic across FFmpeg builds.
+    never replayed. The exact profile used by the renderer is persisted in the composition
+    manifest so CI verifies the generated contract instead of duplicating mutable constants.
     """
     from . import caption_renderer, visual_compositor
     from .production_editorial_v28 import _audio_duration
 
+    profile = VideoProfile.from_env()
     ordered_media = sorted(media, key=lambda item: item.scene_index)
     ordered_shots = sorted(shots, key=lambda item: item.shot_id)
     if not ordered_shots:
         raise ValueError("The editorial timeline contains no shots")
+    if not profile.minimum_shots <= len(ordered_shots) <= profile.maximum_shots:
+        raise ValueError(
+            f"Editorial shot count {len(ordered_shots)} is outside the rendered profile "
+            f"{profile.minimum_shots}-{profile.maximum_shots}"
+        )
     if len(ordered_media) != len(ordered_shots):
         raise ValueError("Every editorial shot requires one unique media asset")
     if [item.scene_index for item in ordered_media] != list(range(len(ordered_media))):
@@ -53,8 +60,15 @@ def compose_editorial_video_v28(
         raise ValueError("Editorial shot IDs are not contiguous")
     if any(item.duration_seconds <= 0 for item in ordered_shots):
         raise ValueError("Editorial shot duration must be positive")
+    if any(item.duration_seconds > profile.maximum_shot_seconds + 1e-6 for item in ordered_shots):
+        raise ValueError("Editorial composition contains an overlong shot")
     if len({str(item.path) for item in ordered_media}) != len(ordered_media):
         raise ValueError("Editorial composition cannot reuse a media path")
+    wan_assets = sum(str(item.media_type) == "video" for item in ordered_media)
+    if wan_assets != profile.wan_shots:
+        raise ValueError(
+            f"Rendered media contains {wan_assets} Wan shots; profile requires {profile.wan_shots}"
+        )
 
     workdir.mkdir(parents=True, exist_ok=True)
     caption_path = workdir / "animated-captions.ass"
@@ -194,14 +208,17 @@ def compose_editorial_video_v28(
         encoding="utf-8",
     )
     if "-stream_loop" in command:
-        raise RuntimeError("v28 compositor attempted source-video looping")
+        raise RuntimeError("v35 compositor attempted source-video looping")
     if completed.returncode != 0 or not output.is_file() or output.stat().st_size < 500_000:
-        raise RuntimeError(f"v28 editorial composition failed: {completed.stderr[-3000:]}")
+        raise RuntimeError(f"v35 editorial composition failed: {completed.stderr[-3000:]}")
 
     thumbnail = workdir / "thumbnail.png"
     visual_compositor._thumbnail(ordered_media[0].keyframe_path, package, thumbnail)
     manifest = {
-        "renderer": "ffmpeg_editorial_timeline_v28_cfr",
+        "renderer": "ffmpeg_editorial_timeline_v35_profile_driven",
+        "editorial_contract": profile.as_dict(),
+        "realized_shot_count": len(ordered_shots),
+        "realized_wan_shots": wan_assets,
         "source_asset_looping": False,
         "destructive_caption_matte": False,
         "still_motion": "deterministic_ken_burns",
