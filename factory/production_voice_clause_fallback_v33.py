@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import wave
 from pathlib import Path
 from typing import Sequence
@@ -12,26 +11,11 @@ from .video_profile import VideoProfile
 
 _INSTALLED = False
 _UNREACHABLE_ERROR = "no candidate reachable within the v28 1.15x tempo ceiling"
-_CONNECTORS = {
-    "and",
-    "but",
-    "because",
-    "while",
-    "which",
-    "that",
-    "so",
-    "as",
-    "by",
-}
+_CONNECTORS = {"and", "but", "because", "while", "which", "that", "so", "as", "by"}
 
 
 def split_sentence_for_clause_fallback_v33(text: str) -> tuple[str, ...]:
-    """Split one unreachable sentence at the strongest natural midpoint boundary.
-
-    The normalized transcript is preserved exactly when the returned clauses are joined by one
-    space. Punctuation boundaries outrank conjunctions; a balanced word boundary is the final
-    fallback. Very short text remains unsplit so it still fails closed rather than sounding choppy.
-    """
+    """Split one unreachable sentence at a natural, balanced boundary."""
     clean = " ".join(text.split()).strip()
     words = clean.split()
     if len(words) < 10:
@@ -50,12 +34,8 @@ def split_sentence_for_clause_fallback_v33(text: str) -> tuple[str, ...]:
                 (punctuation_priority + connector_priority, abs(index - midpoint), index)
             )
 
-    if candidates:
-        split_at = min(candidates)[2]
-    else:
-        split_at = round(midpoint)
-        split_at = max(minimum_side, min(len(words) - minimum_side, split_at))
-
+    split_at = min(candidates)[2] if candidates else round(midpoint)
+    split_at = max(minimum_side, min(len(words) - minimum_side, split_at))
     clauses = (" ".join(words[:split_at]), " ".join(words[split_at:]))
     if any(len(clause.split()) < minimum_side for clause in clauses):
         return (clean,)
@@ -119,6 +99,7 @@ def _write_failure_diagnostic(
     events: Sequence[dict[str, object]],
 ) -> Path:
     destination = _diagnostic_root(output_path) / "voice-calibration-failure.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "status": "voice_clause_fallback_failed_closed",
         "requested_output": str(output_path),
@@ -138,7 +119,7 @@ def build_clause_fallback_tts_class_v33(
     *,
     profile: VideoProfile,
 ) -> type:
-    """Wrap the convergent TTS class with a bounded clause-level recovery path."""
+    """Wrap the convergent TTS class with bounded clause-level recovery."""
     from . import production_voice_calibration_v28 as calibration
     from . import qwen_tts
 
@@ -166,14 +147,13 @@ def build_clause_fallback_tts_class_v33(
 
             clauses = split_sentence_for_clause_fallback_v33(text)
             if len(clauses) < 2:
-                events = calibration._CALIBRATION_EVENTS[event_start:]
                 _write_failure_diagnostic(
                     output_path,
                     text=text,
                     clauses=clauses,
                     trigger_error=trigger,
                     fallback_error="Sentence is too short for safe clause decomposition",
-                    events=events,
+                    events=calibration._CALIBRATION_EVENTS[event_start:],
                 )
                 raise qwen_tts.QwenTTSError(trigger)
 
@@ -269,14 +249,13 @@ def build_clause_fallback_tts_class_v33(
                 )
                 return output_path
             except Exception as fallback_exc:
-                events = calibration._CALIBRATION_EVENTS[event_start:]
                 _write_failure_diagnostic(
                     output_path,
                     text=text,
                     clauses=clauses,
                     trigger_error=trigger,
                     fallback_error=str(fallback_exc),
-                    events=events,
+                    events=calibration._CALIBRATION_EVENTS[event_start:],
                 )
                 output_path.unlink(missing_ok=True)
                 raise qwen_tts.QwenTTSError(
