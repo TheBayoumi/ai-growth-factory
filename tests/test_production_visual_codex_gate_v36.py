@@ -4,6 +4,13 @@ import inspect
 import unittest
 from dataclasses import dataclass
 
+from factory import (
+    image_generator,
+    production_visual_codex_gate_v36 as codex_v36,
+    production_visual_semantic_review_v28 as semantic_v28,
+    visual_prompt_compiler,
+    visual_storyboard_v30,
+)
 from factory.production_visual_codex_gate_v36 import (
     CodexVisualGateError,
     compile_codex_reviewed_prompt_v36,
@@ -33,7 +40,20 @@ def _director(scene_index: int, claim: str) -> str:
 class ProductionVisualCodexGateV36Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls._controlled_test_registry = visual_storyboard_v30._REGISTRY["controlled_test"]
+        cls._visual_prompt_compiler = visual_prompt_compiler.compile_image_prompt
+        cls._image_generator_compiler = image_generator.compile_image_prompt
+        cls._scene_for_attempt = semantic_v28._scene_for_attempt
+        cls._codex_installed = codex_v36._INSTALLED
         install_production_visual_codex_gate_v36()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        visual_storyboard_v30._REGISTRY["controlled_test"] = cls._controlled_test_registry
+        visual_prompt_compiler.compile_image_prompt = cls._visual_prompt_compiler
+        image_generator.compile_image_prompt = cls._image_generator_compiler
+        semantic_v28._scene_for_attempt = cls._scene_for_attempt
+        codex_v36._INSTALLED = cls._codex_installed
 
     def test_scene_16_preserves_exact_machine_contract_without_negative_conflict(self) -> None:
         compiled = compile_codex_reviewed_prompt_v36(
