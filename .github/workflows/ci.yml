@@ -3,19 +3,19 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    types: [closed]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'merge-ci-a10-production-verification' || format('merge-ci-{0}', github.run_id) }}
-  cancel-in-progress: false
+  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'pr-ci-a10-production-verification' || format('pr-ci-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    if: github.event.pull_request.merged == true
+    if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -24,6 +24,8 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.action == 'closed' && 'main' || github.event.pull_request.head.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -46,7 +48,8 @@ jobs:
   production-verification:
     needs: test
     if: >-
-      github.event.pull_request.merged == true &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.draft == false &&
       startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -55,10 +58,10 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
-      - name: Check out CI-verified main
+      - name: Check out exact PR head
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Validate persistent Modal credentials
         shell: bash
@@ -85,20 +88,18 @@ jobs:
           python -m pip install -e . "modal==1.5.3"
           python -m compileall -q factory api cloud scripts
           python -c "from factory.production_runtime import install_production_runtime; install_production_runtime(); print('Production runtime import preflight passed')"
-          python -c "from factory.trend_sources import fetch_trend_snapshot; from factory.trend_ranking import align_primary_sources_to_trends; print('Live trend discovery import preflight passed')"
-          python -c "from factory.visual_prompt import construct_visual_plan; from factory.caption_renderer import write_animated_caption_track; from factory.visual_pipeline import render_visual_plan; print('Autonomous visual pipeline import preflight passed')"
           python scripts/repository_preflight.py
           python scripts/trend_preflight.py
 
       - name: Verify Modal credential pair
         run: modal token info
 
-      - name: Deploy A10 production worker
+      - name: Deploy exact PR head to isolated Modal tag
         env:
           MODAL_USE_FACTORY_SECRET: "false"
-        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
+        run: modal deploy cloud/modal_app.py --tag "${{ github.event.pull_request.head.sha }}"
 
-      - name: Generate real platform-ready video and capture result
+      - name: Generate exact pre-merge production video
         id: production
         continue-on-error: true
         shell: bash
@@ -153,7 +154,7 @@ jobs:
           }
           find production-video -type f -print | sort
 
-      - name: Upload exact production artifact
+      - name: Upload exact pre-merge production artifact
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
@@ -166,7 +167,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Enforce complete platform-ready output
+      - name: Enforce profile-driven editorial output
         if: always() && (steps.production.outcome == 'success' || steps.production.outcome == 'failure')
         shell: bash
         env:
@@ -175,9 +176,7 @@ jobs:
           set -euo pipefail
           if [ "${PRODUCTION_STEP_OUTCOME}" != "success" ]; then
             failure=$(find production-video -name canary-failure.json -type f -print -quit 2>/dev/null || true)
-            if [ -n "${failure}" ]; then
-              cat "${failure}"
-            fi
+            if [ -n "${failure}" ]; then cat "${failure}"; fi
             echo "The real Modal production generation failed." >&2
             exit 1
           fi
@@ -185,6 +184,7 @@ jobs:
           test -n "${result_file}"
           python - "${result_file}" <<'PY'
           import json
+          import re
           import sys
           from pathlib import Path
 
@@ -194,48 +194,186 @@ jobs:
           if result.get("status") != "verified_render_canary":
               raise SystemExit(f"Production output was not verified: {result}")
           required = (
-              "video.mp4",
-              "narration.wav",
-              "thumbnail.png",
-              "voice-review-manifest.json",
-              "video-qc-report.json",
-              "package.json",
-              "trend-snapshot.json",
-              "visual-plan.json",
-              "keyframe-manifest.json",
-              "scene-media-manifest.json",
-              "animated-captions.ass",
-              "animated-captions.json",
-              "visual-composition-manifest.json",
+              "video.mp4", "narration.wav", "thumbnail.png",
+              "voice-review-manifest.json", "video-qc-report.json", "package.json",
+              "trend-snapshot.json", "visual-plan.json", "keyframe-manifest.json",
+              "scene-media-manifest.json", "animated-captions.ass",
+              "animated-captions.json", "visual-composition-manifest.json",
+              "visual-pipeline-manifest.json", "visual-compositor.log",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
               raise SystemExit("Production artifact is incomplete: " + ", ".join(missing))
-          trend_snapshot = json.loads((root / "trend-snapshot.json").read_text(encoding="utf-8"))
-          trend_items = trend_snapshot.get("items") or []
-          provider_status = trend_snapshot.get("provider_status") or {}
-          provider_successes = sum(str(value).startswith("ok:") for value in provider_status.values())
-          trend_matches = ((trend_snapshot.get("alignment") or {}).get("matches") or [])
-          if len(trend_items) < 3:
-              raise SystemExit(f"Expected at least three current AI trend signals: {trend_snapshot}")
-          if provider_successes < 2:
-              raise SystemExit(f"Expected at least two successful trend providers: {provider_status}")
-          if not trend_matches:
-              raise SystemExit("No live trend signal matched an official primary-source article")
+
+          composition = json.loads((root / "visual-composition-manifest.json").read_text(encoding="utf-8"))
+          contract = composition.get("editorial_contract") or {}
+          contract_fields = (
+              "name", "minimum_shots", "target_shots", "maximum_shots",
+              "maximum_shot_seconds", "first_ten_seconds_minimum_shots", "wan_shots",
+              "minimum_wpm", "maximum_wpm", "maximum_tempo_factor",
+              "caption_minimum_seconds", "maximum_single_word_cues",
+              "allow_asset_looping", "allow_destructive_caption_matte",
+          )
+          missing_contract = [field for field in contract_fields if field not in contract]
+          if missing_contract:
+              raise SystemExit(
+                  "Rendered editorial contract is incomplete: " + ", ".join(missing_contract)
+              )
+          minimum_shots = int(contract["minimum_shots"])
+          target_shots = int(contract["target_shots"])
+          maximum_shots = int(contract["maximum_shots"])
+          maximum_shot_seconds = float(contract["maximum_shot_seconds"])
+          opening_minimum = int(contract["first_ten_seconds_minimum_shots"])
+          required_wan_shots = int(contract["wan_shots"])
+          if not 8 <= minimum_shots <= target_shots <= maximum_shots <= 30:
+              raise SystemExit(f"Rendered shot-count contract is invalid: {contract}")
+          if maximum_shots - target_shots > 8:
+              raise SystemExit(f"Rendered hard shot capacity is excessively loose: {contract}")
+          if contract["allow_asset_looping"] is not False:
+              raise SystemExit("Rendered profile permits source-asset looping")
+          if contract["allow_destructive_caption_matte"] is not False:
+              raise SystemExit("Rendered profile permits destructive caption mattes")
+
+          shots = composition.get("shots") or []
+          if not minimum_shots <= len(shots) <= maximum_shots:
+              raise SystemExit(
+                  f"Expected {minimum_shots}-{maximum_shots} editorial shots from "
+                  f"{contract.get('name')}, received {len(shots)}"
+              )
+          if int(composition.get("realized_shot_count", -1)) != len(shots):
+              raise SystemExit("Composition manifest realized_shot_count is inconsistent")
+          if sum(float(item.get("start_seconds", 99)) < 10.0 for item in shots) < opening_minimum:
+              raise SystemExit(
+                  f"The first ten seconds contain fewer than {opening_minimum} unique shots"
+              )
+          if max(float(item.get("duration_seconds", 99)) for item in shots) > maximum_shot_seconds + 0.02:
+              raise SystemExit(
+                  f"An editorial shot exceeds the {maximum_shot_seconds:.2f} second profile ceiling"
+              )
+          required_shot_fields = (
+              "shot_id", "beat_index", "segment_id", "package_scene_index", "semantic_claim"
+          )
+          if any(any(field not in item for field in required_shot_fields) for item in shots):
+              raise SystemExit("Editorial shot-to-narration identity fields are incomplete")
+          if [int(item["shot_id"]) for item in shots] != list(range(len(shots))):
+              raise SystemExit("Editorial shot IDs are not contiguous")
+
+          visual_plan = json.loads((root / "visual-plan.json").read_text(encoding="utf-8"))
+          visual_scenes = sorted(
+              visual_plan.get("scenes") or [],
+              key=lambda item: int(item.get("scene_index", -1)),
+          )
+          if len(visual_scenes) != len(shots):
+              raise SystemExit("Visual plan does not contain exactly one scene per editorial shot")
+          for shot, scene in zip(shots, visual_scenes, strict=True):
+              claim = " ".join(str(shot.get("semantic_claim") or "").split()).casefold()
+              prompt = " ".join(str(scene.get("image_prompt") or "").split()).casefold()
+              if not claim or claim not in prompt:
+                  raise SystemExit(
+                      f"Shot {shot.get('shot_id')} is not aligned to its exact spoken claim"
+                  )
+
+          package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+          narration = " ".join(str(package.get("narration") or "").split())
+          if re.search(
+              r"\b(?:fostering|enabling|supporting|driving|advancing|encouraging)\s+"
+              r"(?:continued|ongoing|further)\s+[A-Z][^.?!]{8,}",
+              narration,
+          ):
+              raise SystemExit("Narration contains a malformed pasted-title transition")
+          if composition.get("source_asset_looping") is not False:
+              raise SystemExit("Source-asset looping is enabled")
+          if composition.get("destructive_caption_matte") is not False:
+              raise SystemExit("Destructive caption matte is enabled")
+          if "-stream_loop" in (root / "visual-compositor.log").read_text(
+              encoding="utf-8", errors="replace"
+          ):
+              raise SystemExit("FFmpeg source-video looping was detected")
+
           keyframes = sorted((root / "visual-keyframes").glob("scene-*-keyframe.png"))
-          if len(keyframes) != 6:
-              raise SystemExit(f"Expected six generated keyframes, received {len(keyframes)}")
-          visuals = result.get("visuals") or {}
-          if visuals.get("wan_scene_count") != 3:
-              raise SystemExit(f"Expected three Wan hero scenes: {visuals}")
-          if visuals.get("captions_baked_into_generated_media") is not False:
-              raise SystemExit("Generated media must be text-free; captions belong to the ASS layer")
-          if visuals.get("caption_rendering") != "separate_animated_ass_layer":
-              raise SystemExit(f"Animated caption contract is missing: {visuals}")
+          if len(keyframes) != len(shots):
+              raise SystemExit(
+                  f"Expected one unique keyframe per shot: {len(keyframes)} vs {len(shots)}"
+              )
+          media = json.loads((root / "scene-media-manifest.json").read_text(encoding="utf-8"))
+          assets = media.get("assets") or []
+          hashes = [str(item.get("sha256") or "") for item in assets]
+          if len(hashes) != len(set(hashes)):
+              raise SystemExit("A scene-media asset was reused")
+          actual_wan_shots = sum(str(item.get("media_type")) == "video" for item in assets)
+          if actual_wan_shots != required_wan_shots:
+              raise SystemExit(
+                  f"Expected {required_wan_shots} Wan hero shots from the rendered profile, "
+                  f"received {actual_wan_shots}"
+              )
+          if int(composition.get("realized_wan_shots", -1)) != actual_wan_shots:
+              raise SystemExit("Composition manifest realized_wan_shots is inconsistent")
+
+          voice = json.loads((root / "voice-review-manifest.json").read_text(encoding="utf-8"))
+          wpm = float((voice.get("metrics") or {}).get("estimated_wpm") or 0.0)
+          minimum_wpm = float(contract["minimum_wpm"])
+          maximum_wpm = float(contract["maximum_wpm"])
+          if not minimum_wpm <= wpm <= maximum_wpm:
+              raise SystemExit(
+                  f"Voice pace {wpm:.2f} WPM is outside {minimum_wpm:.0f}-{maximum_wpm:.0f}"
+              )
+          maximum_tempo_factor = float(contract["maximum_tempo_factor"])
+          for event in voice.get("reviews") or []:
+              factor = float(event.get("factor") or 1.0)
+              if factor > maximum_tempo_factor + 0.000001:
+                  raise SystemExit(
+                      f"Tempo correction {factor:.3f} exceeds {maximum_tempo_factor:.3f}"
+                  )
+
+          captions = json.loads((root / "animated-captions.json").read_text(encoding="utf-8"))
+          cues = captions.get("cues") or []
+          one_word = sum(int(item.get("word_count") or 0) == 1 for item in cues)
+          maximum_one_word = int(contract["maximum_single_word_cues"])
+          if one_word > maximum_one_word:
+              raise SystemExit(
+                  f"Caption track contains {one_word} isolated one-word cues; "
+                  f"profile allows {maximum_one_word}"
+              )
+          minimum_caption_seconds = float(contract["caption_minimum_seconds"])
+          if any(
+              float(item["end_seconds"]) - float(item["start_seconds"])
+              < minimum_caption_seconds - 0.001
+              for item in cues
+          ):
+              raise SystemExit(
+                  f"Caption track contains a cue shorter than {minimum_caption_seconds:.2f} seconds"
+              )
+
           video_qc = result.get("video_qc") or {}
           if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
               raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
           if float(video_qc.get("fps", 0.0)) < 29.0:
-              raise SystemExit(f"Production video frame rate is below 30 fps target: {video_qc}")
+              raise SystemExit(f"Production frame rate is below 30 fps: {video_qc}")
           print(json.dumps(result, indent=2, ensure_ascii=False))
           PY
+
+  deploy-reviewed-production:
+    needs: test
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Check out reviewed main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - name: Deploy reviewed daily worker
+        env:
+          MODAL_USE_FACTORY_SECRET: "false"
+        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"
