@@ -119,7 +119,7 @@ class EditorialTimelineTests(unittest.TestCase):
         self.assertTrue(all(shot.semantic_claim.startswith("Narration beat") for shot in shots))
         self.assertEqual(len({shot.shot_id for shot in shots}), len(shots))
 
-    def test_real_canary_duration_uses_sentence_aligned_19_shot_timeline(self) -> None:
+    def test_real_canary_duration_uses_active_sentence_aligned_shot_profile(self) -> None:
         package = self._package()
         texts = [
             "Microsoft Research launched Orchard as an open framework. Infrastructure reuse helps smaller models achieve strong performance.",
@@ -144,17 +144,19 @@ class EditorialTimelineTests(unittest.TestCase):
                 zip(texts, starts, ends, strict=True)
             )
         )
+        profile = VideoProfile()
         expanded, shots = build_editorial_plan(
             plan=self._plan(),
             package=package,
             segments=segments,
             total_duration=61.666833,
-            profile=VideoProfile(),
+            profile=profile,
         )
-        self.assertEqual(len(shots), 19)
-        self.assertEqual(len(expanded.scenes), 19)
+        self.assertEqual(len(shots), profile.target_shots)
+        self.assertEqual(len(expanded.scenes), profile.target_shots)
         self.assertGreaterEqual(sum(shot.start_seconds < 10.0 for shot in shots), 4)
         self.assertLessEqual(max(shot.duration_seconds for shot in shots), 4.25)
+        self.assertEqual(sum(shot.renderer == "wan_i2v" for shot in shots), profile.wan_shots)
         self.assertTrue(any("Infrastructure reuse" in shot.semantic_claim for shot in shots))
         self.assertTrue(
             all(
@@ -212,8 +214,8 @@ class EditorialTimelineTests(unittest.TestCase):
             profile=profile,
         )
 
-        self.assertEqual(len(shots), 20)
-        self.assertEqual(len(expanded.scenes), 20)
+        self.assertEqual(len(shots), profile.target_shots)
+        self.assertEqual(len(expanded.scenes), profile.target_shots)
         self.assertAlmostEqual(shots[0].duration_seconds, 3.3, places=5)
         self.assertLessEqual(shots[0].duration_seconds, profile.maximum_wan_shot_seconds)
         self.assertEqual(sum(shot.start_seconds < 10.0 for shot in shots), 4)
