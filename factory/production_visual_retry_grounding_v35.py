@@ -46,10 +46,15 @@ def scene_for_attempt_v35(
 
 
 def install_production_visual_retry_grounding_v35() -> None:
-    """Make reviewer-driven regeneration preserve the exact failed scene contract."""
+    """Install v35 compatibility, then hand final authority to the v36 Codex scene gate."""
     global _INSTALLED
     if _INSTALLED:
         return
 
+    from .production_visual_codex_gate_v36 import (
+        install_production_visual_codex_gate_v36,
+    )
+
     semantic_v28._scene_for_attempt = scene_for_attempt_v35
+    install_production_visual_codex_gate_v36()
     _INSTALLED = True
