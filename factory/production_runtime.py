@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v31 subject authority is final.
+    """Install production policies in deterministic order; v34 is final visual authority.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -38,6 +38,9 @@ def install_production_runtime() -> None:
     )
     from .production_story_coherence import install_production_story_coherence
     from .production_video_qc import install_production_video_qc
+    from .production_visual_atomic_storyboard_v34 import (
+        install_production_visual_atomic_storyboard_v34,
+    )
     from .production_visual_convergence_v29 import (
         install_production_visual_convergence_v29,
     )
@@ -92,8 +95,7 @@ def install_production_runtime() -> None:
     install_production_scene_metadata()
 
     # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling;
-    # v33 adds a bounded clause-level recovery path only after full-sentence convergence is
-    # exhausted. Pace, fidelity, tempo, transcript identity, and perceptual review remain strict.
+    # v33 adds bounded clause-level recovery only after full-sentence convergence is exhausted.
     install_production_editorial_v28()
     install_production_voice_bounds_v28()
     install_production_voice_calibration_v28()
@@ -104,24 +106,20 @@ def install_production_runtime() -> None:
     install_production_voice_capacity_v29()
     install_production_voice_clause_fallback_v33()
 
-    # Legacy visual adapters install first for compatibility. v30 owns the storyboard registry and
-    # evidence reviewer; v31 is the final generation authority for subject-first prompts, effective
-    # retry corrections, and fail-closed SDXL CLIP-window validation.
+    # Legacy visual adapters install first for compatibility. v30 owns the registry/reviewer, v31
+    # owns subject-first CLIP-safe compilation, and v34 finally enforces atomic controlled-test
+    # targets, text-resistant equipment, and retry instructions that do not invent people.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
     install_production_visual_storyboard_v30()
     install_production_visual_subject_authority_v31()
+    install_production_visual_atomic_storyboard_v34()
 
     from . import image_generator, production_editorial_v28, visual_pipeline
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
-    # The final visual pipeline owns stable selective retries, approved-frame caching,
-    # storyboard-driven cross-environment diversity, and set-level perceptual enforcement.
     image_generator.generate_keyframes = visual_pipeline.generate_keyframes
-
-    # Bind the CFR-safe compositor proven against mixed image/Wan inputs. This adapter forbids
-    # source looping, gives stills deterministic motion, and forces yuv420p after subtitles.
     production_editorial_v28._compose_editorial_video = compose_editorial_video_v28
     _INSTALLED = True
