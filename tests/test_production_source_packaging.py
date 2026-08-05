@@ -35,7 +35,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         missing = [name for name in required if not (ROOT / "factory" / name).is_file()]
         self.assertEqual(missing, [])
 
-    def test_gpu_workflow_imports_runtime_before_deployment(self):
+    def test_gpu_workflow_imports_runtime_and_visual_stack_before_deployment(self):
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8"
         )
@@ -48,15 +48,17 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "from factory.caption_renderer import write_animated_caption_track; "
             "from factory.visual_pipeline import render_visual_plan"
         )
+        deploy_step = "Deploy exact PR head to isolated Modal tag"
         self.assertIn(production_preflight, workflow)
         self.assertIn(visual_preflight, workflow)
+        self.assertIn(deploy_step, workflow)
         self.assertLess(
             workflow.index("Production runtime import preflight passed"),
-            workflow.index("Deploy A10 production worker"),
+            workflow.index(deploy_step),
         )
         self.assertLess(
             workflow.index("Autonomous visual pipeline import preflight passed"),
-            workflow.index("Deploy A10 production worker"),
+            workflow.index(deploy_step),
         )
 
     def test_modal_worker_pins_and_preflights_wan_exporter(self):
