@@ -85,7 +85,7 @@ class VisualStoryboardV30Tests(unittest.TestCase):
             "public research hall",
             "hands-on training bench",
             "data-storage hardware room",
-            "controlled robotics test cell",
+            "compact controlled test bench",
         )
         for environment in expected_environments:
             self.assertIn(environment, combined)
@@ -170,7 +170,7 @@ class VisualStoryboardV30Tests(unittest.TestCase):
         self.assertIn("classify_claim_v30", source)
         self.assertIn("_visual_storyboard_v30.classify_claim", source)
 
-    def test_runtime_installs_v30_last(self) -> None:
+    def test_runtime_installs_storyboard_layers_before_pipeline_binding(self) -> None:
         source = Path("factory/production_runtime.py").read_text(encoding="utf-8")
         self.assertLess(
             source.index("install_production_visual_prompt_cleanup_v29()"),
@@ -178,6 +178,10 @@ class VisualStoryboardV30Tests(unittest.TestCase):
         )
         self.assertLess(
             source.index("install_production_visual_storyboard_v30()"),
+            source.index("install_production_visual_atomic_storyboard_v34()"),
+        )
+        self.assertLess(
+            source.index("install_production_visual_atomic_storyboard_v34()"),
             source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
         )
 
