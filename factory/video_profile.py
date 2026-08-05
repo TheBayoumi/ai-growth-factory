@@ -8,9 +8,14 @@ from typing import Any
 
 @dataclass(frozen=True)
 class VideoProfile:
-    """Runtime-editable editorial contract for one short-form channel profile."""
+    """Runtime-editable editorial contract for one short-form channel profile.
 
-    name: str = "tech_news_explainer_v32"
+    ``target_shots`` controls the preferred editorial density. ``maximum_shots`` is a hard
+    fail-closed capacity for narrations whose natural beat boundaries need additional short shots.
+    The planner never pads a video to the hard capacity and never exceeds the shot-duration gate.
+    """
+
+    name: str = "tech_news_explainer_v35"
     target_wpm: int = 142
     minimum_wpm: int = 138
     maximum_wpm: int = 146
@@ -19,7 +24,7 @@ class VideoProfile:
     pre_cta_pause_ms: int = 550
     minimum_shots: int = 16
     target_shots: int = 20
-    maximum_shots: int = 20
+    maximum_shots: int = 24
     minimum_shot_seconds: float = 1.65
     maximum_shot_seconds: float = 4.25
     maximum_wan_shot_seconds: float = 3.30
@@ -44,6 +49,8 @@ class VideoProfile:
             raise ValueError("maximum_tempo_factor must be between 1.0 and 1.20")
         if not 8 <= self.minimum_shots <= self.target_shots <= self.maximum_shots <= 30:
             raise ValueError("shot-count limits are inconsistent")
+        if self.maximum_shots - self.target_shots > 8:
+            raise ValueError("maximum_shots may exceed target_shots by at most eight")
         if not 1.0 <= self.minimum_shot_seconds < self.maximum_shot_seconds <= 6.0:
             raise ValueError("shot-duration limits are inconsistent")
         if not self.minimum_shot_seconds <= self.maximum_wan_shot_seconds <= 4.0:
@@ -57,9 +64,9 @@ class VideoProfile:
         if not 0.55 <= self.caption_baseline_ratio <= 0.88:
             raise ValueError("caption_baseline_ratio must stay in the platform-safe range")
         if self.allow_asset_looping:
-            raise ValueError("v32 never permits source-asset looping")
+            raise ValueError("v35 never permits source-asset looping")
         if self.allow_destructive_caption_matte:
-            raise ValueError("v32 never permits destructive caption mattes")
+            raise ValueError("v35 never permits destructive caption mattes")
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
