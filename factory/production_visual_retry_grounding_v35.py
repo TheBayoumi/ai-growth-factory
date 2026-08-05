@@ -46,7 +46,7 @@ def scene_for_attempt_v35(
 
 
 def install_production_visual_retry_grounding_v35() -> None:
-    """Install compatibility layers, then hand final authority to narration-grounded v40."""
+    """Install compatibility layers, then hand final authority to literal convergence v41."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -60,9 +60,13 @@ def install_production_visual_retry_grounding_v35() -> None:
     from .production_visual_semantic_grounding_v40 import (
         install_production_visual_semantic_grounding_v40,
     )
+    from .production_visual_convergence_v41 import (
+        install_production_visual_convergence_v41,
+    )
 
     semantic_v28._scene_for_attempt = scene_for_attempt_v35
     install_production_visual_codex_gate_v36()
     install_production_visual_codex_gate_v37()
     install_production_visual_semantic_grounding_v40()
+    install_production_visual_convergence_v41()
     _INSTALLED = True
