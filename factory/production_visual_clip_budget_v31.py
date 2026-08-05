@@ -7,11 +7,15 @@ _INSTALLED = False
 
 
 def compact_negative_clip_safe_v31() -> str:
-    """Keep the full negative contract inside a conservative SDXL CLIP token budget."""
+    """Keep text/anatomy/equipment defects inside a conservative SDXL CLIP budget.
+
+    People are not globally mandatory because valid documentary shots may be equipment-only.
+    """
     return clean(
-        "readable text, logo, watermark, screen, collage, empty room, empty server aisle, "
-        "vacant scene, absent people, tiny people, robot person, duplicate people, bad anatomy, "
-        "malformed anatomy, extra limbs, bad hands, broken gear, blurry face, corridor, blocks, orb"
+        "readable text, pseudo-text, gibberish, logo, watermark, printed label, engraved markings, "
+        "screen, collage, empty architecture, vacant scene, humanoid robot, duplicate people, "
+        "malformed anatomy, extra limbs, bad hands, warped equipment, broken gear, blurry face, "
+        "corridor, blocks, orb"
     )
 
 
