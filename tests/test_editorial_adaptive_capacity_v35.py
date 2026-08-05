@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 from pathlib import Path
 
@@ -65,7 +66,7 @@ class EditorialAdaptiveCapacityV35Tests(unittest.TestCase):
             scenes=scenes,
         )
 
-    def test_real_eleven_beat_narration_uses_twenty_two_shots_inside_hard_capacity(self) -> None:
+    def test_real_eleven_beat_narration_adds_one_opening_density_shot(self) -> None:
         texts = (
             "NVIDIA's Open Secure AI Alliance is developing new cybersecurity guidelines for agentic AI.",
             "The Linux Foundation has released a Request for Comments on Shared AI Findings Exchange, aiming to improve transparency and security.",
@@ -100,7 +101,11 @@ class EditorialAdaptiveCapacityV35Tests(unittest.TestCase):
                 instruction="test",
                 audio_path=Path(f"capacity-{index}.wav"),
                 start_seconds=start,
-                end_seconds=(starts[index + 1] - 0.14 if index + 1 < len(starts) else total_duration),
+                end_seconds=(
+                    starts[index + 1] - 0.14
+                    if index + 1 < len(starts)
+                    else total_duration
+                ),
             )
             for index, (text, start) in enumerate(zip(texts, starts, strict=True))
         )
@@ -113,14 +118,23 @@ class EditorialAdaptiveCapacityV35Tests(unittest.TestCase):
             profile=profile,
         )
 
+        beat_boundaries = starts[1:] + (total_duration,)
+        duration_minimum = sum(
+            math.ceil((end - start) / profile.maximum_shot_seconds)
+            for start, end in zip(starts, beat_boundaries, strict=True)
+        )
+        self.assertEqual(duration_minimum, 22)
         self.assertEqual(profile.target_shots, 20)
         self.assertEqual(profile.maximum_shots, 24)
-        self.assertEqual(len(shots), 22)
-        self.assertEqual(len(expanded.scenes), 22)
+        self.assertEqual(len(shots), duration_minimum + 1)
+        self.assertEqual(len(shots), 23)
+        self.assertEqual(len(expanded.scenes), len(shots))
         self.assertGreaterEqual(len(shots), profile.target_shots)
         self.assertLessEqual(len(shots), profile.maximum_shots)
         self.assertEqual(sum(shot.renderer == "wan_i2v" for shot in shots), profile.wan_shots)
-        self.assertGreaterEqual(sum(shot.start_seconds < 10.0 for shot in shots), 4)
+        opening_shots = [shot for shot in shots if shot.start_seconds < 10.0]
+        self.assertGreaterEqual(len(opening_shots), 4)
+        self.assertLess(opening_shots[3].start_seconds, 10.0)
         self.assertLessEqual(max(shot.duration_seconds for shot in shots), profile.maximum_shot_seconds)
         self.assertAlmostEqual(sum(shot.duration_seconds for shot in shots), total_duration, places=4)
         represented = {shot.segment_id for shot in shots}
@@ -129,7 +143,10 @@ class EditorialAdaptiveCapacityV35Tests(unittest.TestCase):
     def test_hard_capacity_remains_fail_closed(self) -> None:
         profile = VideoProfile(maximum_shots=20)
         profile.validate()
-        texts = tuple(f"A deliberately long independent beat number {index} requires two shots." for index in range(11))
+        texts = tuple(
+            f"A deliberately long independent beat number {index} requires two shots."
+            for index in range(11)
+        )
         starts = tuple(index * 5.0 for index in range(11))
         segments = tuple(
             NarrationSegment(
