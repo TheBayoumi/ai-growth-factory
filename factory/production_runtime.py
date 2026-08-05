@@ -79,6 +79,9 @@ def install_production_runtime() -> None:
     from .production_voice_technical_identifier_v42 import (
         install_production_voice_technical_identifier_v42,
     )
+    from .production_voice_technical_pacing_v43 import (
+        install_production_voice_technical_pacing_v43,
+    )
 
     install_production_settings()
     install_production_audio_qc()
@@ -103,8 +106,8 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # Voice quality remains fail-closed. v42 corrects only the measurement bias caused by mixed
-    # letter/number identifiers after all synthesis and clause-recovery wrappers are installed.
+    # Voice quality remains fail-closed. v42 corrects mixed identifier measurement and v43 makes
+    # the final sentence pacing stage consume the same auditable spoken-equivalent metric.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
@@ -116,6 +119,7 @@ def install_production_runtime() -> None:
     install_production_voice_capacity_v29()
     install_production_voice_clause_fallback_v33()
     install_production_voice_technical_identifier_v42()
+    install_production_voice_technical_pacing_v43()
 
     # Legacy visual adapters install first for compatibility. v41 is installed through v35 as the
     # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
