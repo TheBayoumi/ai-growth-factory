@@ -29,7 +29,7 @@ class VideoProfile:
     maximum_shot_seconds: float = 4.25
     maximum_wan_shot_seconds: float = 3.30
     first_ten_seconds_minimum_shots: int = 4
-    wan_shots: int = 6
+    wan_shots: int = 3
     caption_minimum_words: int = 2
     caption_maximum_words: int = 5
     caption_maximum_characters: int = 34

@@ -47,10 +47,13 @@ def allocate_editorial_durations_v38(
 
 
 def install_production_editorial_wan_allocator_v38() -> None:
-    """Install bounded opening-Wan recovery without weakening editorial limits."""
+    """Install profile-driven Wan selection and bounded opening-Wan recovery."""
     global _INSTALLED
     if _INSTALLED:
         return
 
+    from .production_wan_budget_v32 import install_production_wan_budget_v32
+
+    install_production_wan_budget_v32()
     editorial_timeline._allocate_durations = allocate_editorial_durations_v38
     _INSTALLED = True

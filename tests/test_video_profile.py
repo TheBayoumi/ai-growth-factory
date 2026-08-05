@@ -20,6 +20,7 @@ class VideoProfileTests(unittest.TestCase):
         self.assertEqual(profile.maximum_shots, 24)
         self.assertGreater(profile.maximum_shots, profile.target_shots)
         self.assertLessEqual(profile.maximum_tempo_factor, 1.15)
+        self.assertEqual(profile.wan_shots, 3)
 
     def test_json_and_scalar_overrides_are_validated(self) -> None:
         with patch.dict(
