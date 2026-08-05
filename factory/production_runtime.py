@@ -5,7 +5,7 @@ _INSTALLED = False
 
 
 def install_production_runtime() -> None:
-    """Install production policies in deterministic order; v37 is final visual authority.
+    """Install production voice, editorial, and visual policies in deterministic order.
 
     Source attribution remains owned by factory.source_attributed_llm at the validated package
     boundary. The deleted source-index repair heuristic is intentionally not reintroduced.
@@ -76,6 +76,9 @@ def install_production_runtime() -> None:
     )
     from .production_voice_repair import install_production_voice_repair
     from .production_voice_runtime_v28 import install_production_voice_runtime_v28
+    from .production_voice_technical_identifier_v42 import (
+        install_production_voice_technical_identifier_v42,
+    )
 
     install_production_settings()
     install_production_audio_qc()
@@ -100,8 +103,8 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # Voice quality remains fail-closed. v29 replaces only the arbitrary segment-count ceiling;
-    # v33 adds bounded clause-level recovery only after full-sentence convergence is exhausted.
+    # Voice quality remains fail-closed. v42 corrects only the measurement bias caused by mixed
+    # letter/number identifiers after all synthesis and clause-recovery wrappers are installed.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
@@ -112,10 +115,10 @@ def install_production_runtime() -> None:
     install_production_voice_editorial_pacing_v28()
     install_production_voice_capacity_v29()
     install_production_voice_clause_fallback_v33()
+    install_production_voice_technical_identifier_v42()
 
-    # Legacy visual adapters install first for compatibility. v30 owns the registry/reviewer, v31
-    # owns subject-first CLIP-safe compilation, v34 enforces atomic controlled-test targets, and
-    # v35 installs the v36/v37 Codex scene-contract and reviewer-feedback authorities.
+    # Legacy visual adapters install first for compatibility. v41 is installed through v35 as the
+    # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
     install_production_visual_convergence_v29()
