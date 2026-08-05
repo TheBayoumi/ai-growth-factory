@@ -85,7 +85,7 @@ class ModalContractTests(unittest.TestCase):
     def test_production_runs_from_the_exact_verified_pr_head(self):
         self.assertIn("Check out exact PR head", self.workflow)
         self.assertIn('ref: ${{ github.event.pull_request.head.sha }}', self.workflow)
-        self.assertIn("Autonomous visual pipeline import preflight passed", self.workflow)
+        self.assertIn("Production runtime import preflight passed", self.workflow)
         self.assertIn("Deploy exact PR head to isolated Modal tag", self.workflow)
         self.assertIn("Generate exact pre-merge production video", self.workflow)
         self.assertNotIn("Check out CI-verified main", self.workflow)
