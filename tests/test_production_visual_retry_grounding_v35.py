@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from factory.production_visual_retry_grounding_v35 import (
@@ -8,6 +9,13 @@ from factory.production_visual_retry_grounding_v35 import (
     scene_for_attempt_v35,
 )
 from factory.production_visual_subject_authority_v31 import compile_subject_first_prompt_v31
+
+
+@dataclass(frozen=True)
+class SceneFixture:
+    image_prompt: str
+    negative_prompt: str
+    seed: int
 
 
 class VisualRetryGroundingV35Tests(unittest.TestCase):
@@ -27,7 +35,7 @@ class VisualRetryGroundingV35Tests(unittest.TestCase):
         self.assertIn("named machine", lowered)
 
     def test_retry_scene_restarts_from_base_and_compiles_required_details(self) -> None:
-        scene = SimpleNamespace(
+        scene = SceneFixture(
             image_prompt=(
                 "Supporting source-grounded visual direction: A researcher validates modular software. "
                 "Shot treatment: human-scale documentary view."
