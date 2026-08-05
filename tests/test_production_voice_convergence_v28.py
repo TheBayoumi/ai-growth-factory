@@ -57,7 +57,8 @@ class ProductionVoiceConvergenceV28Tests(unittest.TestCase):
         ]
         self.assertTrue(all(len(sentence.split()) == 8 for sentence in sentences))
         narration = " ".join(sentences)
-        segments = split_narration_for_voice_v29(narration, 6)
+        with patch.dict(os.environ, {"V28_MIN_VOICE_SEGMENT_WORDS": "8"}):
+            segments = split_narration_for_voice_v29(narration, 6)
         self.assertEqual(len(segments), 13)
         self.assertEqual(" ".join(segments), narration)
         self.assertTrue(all(8 <= len(segment.split()) <= 24 for segment in segments))
@@ -81,7 +82,13 @@ class ProductionVoiceConvergenceV28Tests(unittest.TestCase):
         )
 
     def test_v29_absolute_ceiling_remains_fail_closed(self) -> None:
-        with patch.dict(os.environ, {"V29_ABSOLUTE_MAX_VOICE_SEGMENTS": "12"}):
+        with patch.dict(
+            os.environ,
+            {
+                "V29_ABSOLUTE_MAX_VOICE_SEGMENTS": "12",
+                "V28_MIN_VOICE_SEGMENT_WORDS": "8",
+            },
+        ):
             self.assertEqual(
                 voice_segment_capacity_v29(
                     total_words=104,
