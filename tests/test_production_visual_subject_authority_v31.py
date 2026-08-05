@@ -121,8 +121,10 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
         first_prompt = compile_subject_first_prompt_v31(first.image_prompt)
         retry_prompt = compile_subject_first_prompt_v31(retry.image_prompt)
         self.assertNotEqual(first_prompt.compiled_prompt, retry_prompt.compiled_prompt)
-        self.assertIn("Every named adult", retry.image_prompt)
-        self.assertIn("Every named adult", retry_prompt.compiled_prompt)
+        self.assertIn("one primary subject", retry.image_prompt)
+        self.assertIn("one clear physical action", retry.image_prompt)
+        self.assertIn("one primary subject", retry_prompt.compiled_prompt)
+        self.assertNotIn("Every named adult", retry.image_prompt)
         self.assertEqual(retry.image_prompt.count("V30 STORYBOARD:"), 1)
         self.assertEqual(retry.image_prompt.count("V31 REPAIR:"), 1)
         self.assertNotEqual(first.seed, retry.seed)
@@ -131,8 +133,16 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
         compiled = compile_subject_first_prompt_v31(director_prompt(ORCHARD_CLAIMS[2], 5))
         validate_clip_windows(_FakePipeline(), compiled.compiled_prompt, compiled.negative_prompt)
         self.assertLessEqual(len(_words(compiled.negative_prompt)), 52)
-        for required in ("empty room", "absent people", "readable text", "malformed anatomy"):
+        for required in (
+            "readable text",
+            "pseudo-text",
+            "printed label",
+            "vacant scene",
+            "malformed anatomy",
+            "warped equipment",
+        ):
             self.assertIn(required, _compact_negative())
+        self.assertNotIn("absent people", _compact_negative())
 
     def test_clip_overflow_fails_before_sdxl_inference(self) -> None:
         with self.assertRaisesRegex(Exception, "SDXL CLIP window overflow"):
@@ -142,7 +152,7 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
                 _compact_negative(),
             )
 
-    def test_runtime_installs_v31_after_v30_and_before_pipeline_binding(self) -> None:
+    def test_runtime_installs_v31_before_v34_and_pipeline_binding(self) -> None:
         source = Path("factory/production_runtime.py").read_text(encoding="utf-8")
         self.assertLess(
             source.index("install_production_visual_storyboard_v30()"),
@@ -150,6 +160,10 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
         )
         self.assertLess(
             source.index("install_production_visual_subject_authority_v31()"),
+            source.index("install_production_visual_atomic_storyboard_v34()"),
+        )
+        self.assertLess(
+            source.index("install_production_visual_atomic_storyboard_v34()"),
             source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
         )
 
