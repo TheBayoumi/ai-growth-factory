@@ -161,6 +161,54 @@ _AGENT_WORKFLOW_FRAMES = (
         "low tracking-style locked view down the test lane",
         "industrial daylight, gray robot, colored unlabelled bins",
     ),
+    StoryboardFrame(
+        "agent_workflow", 4,
+        "a portable field-service shelter with a rugged tablet, camera sensor, and diagnostic meter",
+        "one field technician beside the open service kit",
+        "the technician lets the local agent inspect the camera feed, select the meter, and record the result",
+        "medium documentary view with the complete tool sequence visible",
+        "overcast daylight, rugged gray equipment, orange case accents",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 5,
+        "a private clinic room with an offline workstation, scanner, and unlabelled imaging device",
+        "one clinical technician beside the connected equipment",
+        "the local agent checks one image, selects the scanner, and prepares the next offline step",
+        "calm eye-level view across the private multi-device workflow",
+        "clean white room, soft daylight, restrained teal accents",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 6,
+        "a quiet home workspace with a laptop, phone, and unbranded USB instrument",
+        "one developer beside the three personal devices",
+        "the local agent reads one device result, chooses the instrument, and completes the task on the laptop",
+        "close candid view with every device and action visible",
+        "warm window light, graphite devices, blue instrument accents",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 7,
+        "a benchmark bench with a laptop, compact desktop, and power meter",
+        "one performance engineer beside the connected computers",
+        "the local agent runs the same tool sequence on both computers while the meter records each result",
+        "balanced comparison with both workflows equally visible",
+        "neutral task light, graphite hardware, amber meter accents",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 8,
+        "a manufacturing inspection line with a local vision computer, camera, and reject tray",
+        "one quality engineer beside the inspection station",
+        "the local agent inspects one part, selects the camera tool, and routes the part into the correct tray",
+        "diagonal process view from camera to computer to tray",
+        "industrial gray, white task light, cyan indicators",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 9,
+        "an archival research table with unlabelled reports, a document scanner, and one laptop",
+        "one analyst beside the ordered reports and connected scanner",
+        "the local agent finds one report, selects the scanner tool, and adds the result to the laptop review",
+        "high three-quarter view across the complete evidence workflow",
+        "warm reading light, neutral paper, dark laptop",
+    ),
 )
 
 _LONG_CONTEXT_FRAMES = (
@@ -523,11 +571,11 @@ def _environment_family(environment: str) -> str:
     value = clean(environment).casefold()
     families = (
         ("performance-lab", ("benchmark", "gpu test", "cpu evaluation", "power meter")),
+        ("business-operations", ("retail", "logistics", "warehouse", "business")),
         ("robotics", ("robot", "gripper", "smart-home", "smart home")),
         ("industrial-edge", ("factory", "manufacturing", "sensor line", "vehicle")),
         ("healthcare", ("clinic", "medical")),
         ("field-mobile", ("field kit", "portable", "rugged")),
-        ("business-operations", ("retail", "logistics", "warehouse", "business")),
         ("research-evidence", ("archival", "legal review", "project room", "notebook")),
         ("server-infrastructure", ("server room", "rack", "data center", "compute room")),
         ("controlled-test", ("quality-control", "test bench", "measurement bench")),

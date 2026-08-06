@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from factory.production_visual_convergence_v41 import (
     classify_scene_v41,
     compile_convergent_prompt_v41,
     grounded_contract_for_v41,
     scene_for_attempt_v41,
+    validate_editorial_contract_diversity_v41,
 )
 
 
@@ -40,6 +42,24 @@ class ProductionVisualConvergenceV41Tests(unittest.TestCase):
             for index in range(30)
         ]
         self.assertEqual(len(identities), len(set(identities)))
+
+    def test_agent_heavy_storyboard_uses_multiple_literal_environments(self) -> None:
+        scenes = [
+            SimpleNamespace(
+                scene_index=index,
+                image_prompt=_director(
+                    "The local agent uses tool calling to complete a multi-step workflow",
+                    "Show the exact physical tool sequence",
+                    index,
+                ),
+            )
+            for index in range(20)
+        ]
+
+        families = validate_editorial_contract_diversity_v41(scenes)
+
+        self.assertGreaterEqual(len(families), 6)
+        self.assertLessEqual(max(families.values()), 7)
 
     def test_enterprise_scene_uses_literal_indoor_network_action(self) -> None:
         director = _director(
