@@ -27,11 +27,13 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
       - name: Download exact canary bundle
-        run: modal volume get --force ai-growth-factory-state "$CANARY_REMOTE_PATH" canary-artifact
+        run: |
+          mkdir -p canary-artifact
+          modal volume get --force ai-growth-factory-state "$CANARY_REMOTE_PATH/**" canary-artifact
       - name: List exported evidence
-        run: find canary-artifact -maxdepth 4 -type f -printf '%P\n' | sort
+        run: find canary-artifact -maxdepth 5 -type f -printf '%P\n' | sort
       - uses: actions/upload-artifact@v4
         with:
-          name: vimax-remotion-canary-20260806T134940Z-891c0bb6
+          name: vimax-remotion-canary-files-20260806T134940Z-891c0bb6
           path: canary-artifact
           retention-days: 14
