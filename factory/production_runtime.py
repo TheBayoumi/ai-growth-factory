@@ -113,6 +113,7 @@ def install_production_runtime() -> None:
     # Voice quality remains fail-closed. v42 corrects mixed identifier measurement and v43 makes
     # the final sentence pacing stage consume the same auditable spoken-equivalent metric. v45
     # installs last and only activates after the older bounded recovery layers exhaust themselves.
+    # This authority file intentionally triggers exact-head migration CI and GPU canary validation.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
