@@ -3,13 +3,14 @@ name: Run ViMax Remotion GPU Canary
 on:
   workflow_dispatch:
   # Controlled migration trigger: normal code pushes do not spend Modal quota. This branch-only
-  # path filter runs when the canary definition itself changes, which is used for validation.
+  # path filter runs only when the canary runtime or adapter changes during validation.
   push:
     branches:
       - feat/vimax-remotion-pipeline
     paths:
       - ".github/workflows/vimax-remotion-canary.yml"
       - "cloud/modal_app.py"
+      - "scripts/run_vimax_planner.py"
 
 permissions:
   contents: read
