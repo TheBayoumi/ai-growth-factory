@@ -117,6 +117,12 @@ def render_with_remotion(
     workdir.mkdir(parents=True, exist_ok=True)
     stage_root = Path(tempfile.mkdtemp(prefix="remotion-stage-", dir=workdir))
     staged_spec, staged_spec_path = stage_render_assets(spec=spec, stage_root=stage_root)
+    # The temporary stage contains copied media, but the exact JSON input is small and must remain
+    # available after workdir cleanup. Persist a byte-identical copy and bind the manifest digest
+    # to that durable path so an exported canary can prove exactly what Chromium rendered.
+    persisted_staged_spec_path = workdir / "remotion-staged-render-spec.json"
+    shutil.copy2(staged_spec_path, persisted_staged_spec_path)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log_path = workdir / "remotion-render.log"
     manifest_path = workdir / "remotion-render-manifest.json"
@@ -159,10 +165,11 @@ def render_with_remotion(
     payload: dict[str, Any] = render_manifest_payload(
         spec=staged_spec,
         output_path=output_path,
-        staged_spec_path=staged_spec_path,
+        staged_spec_path=persisted_staged_spec_path,
         renderer_version=REMOTION_VERSION,
     )
     payload["command"] = command
+    payload["rendered_from_temporary_spec"] = str(staged_spec_path)
     payload["log"] = str(log_path)
     manifest_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
