@@ -75,6 +75,9 @@ def install_production_runtime() -> None:
     from .production_voice_editorial_pacing_v28 import (
         install_production_voice_editorial_pacing_v28,
     )
+    from .production_voice_micro_clause_fallback_v45 import (
+        install_production_voice_micro_clause_fallback_v45,
+    )
     from .production_voice_repair import install_production_voice_repair
     from .production_voice_runtime_v28 import install_production_voice_runtime_v28
     from .production_voice_technical_identifier_v42 import (
@@ -108,7 +111,8 @@ def install_production_runtime() -> None:
     install_production_scene_metadata()
 
     # Voice quality remains fail-closed. v42 corrects mixed identifier measurement and v43 makes
-    # the final sentence pacing stage consume the same auditable spoken-equivalent metric.
+    # the final sentence pacing stage consume the same auditable spoken-equivalent metric. v45
+    # installs last and only activates after the older bounded recovery layers exhaust themselves.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
@@ -121,6 +125,7 @@ def install_production_runtime() -> None:
     install_production_voice_clause_fallback_v33()
     install_production_voice_technical_identifier_v42()
     install_production_voice_technical_pacing_v43()
+    install_production_voice_micro_clause_fallback_v45()
 
     # Legacy visual adapters install first for compatibility. v41 is installed through v35 as the
     # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
@@ -140,4 +145,14 @@ def install_production_runtime() -> None:
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
     production_editorial_v28._compose_editorial_video = compose_editorial_video_v28
+
+    # ViMax replaces planning only when explicitly enabled. Remotion is installed last so no
+    # compatibility adapter can overwrite the selected final compositor.
+    from .production_vimax_planning_v45 import install_production_vimax_planning_v45
+    from .production_remotion_renderer_v45 import install_production_remotion_renderer_v45
+    from .production_visual_audit_v45 import install_production_visual_audit_v45
+
+    install_production_vimax_planning_v45()
+    install_production_remotion_renderer_v45()
+    install_production_visual_audit_v45()
     _INSTALLED = True
