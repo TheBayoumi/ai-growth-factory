@@ -12,6 +12,7 @@ def _copy_new_artifacts(workdir: Path, destination: Path) -> None:
     candidates = (
         visual_root / "vimax-plan.json",
         visual_root / "render" / "remotion-render-spec.json",
+        visual_root / "render" / "remotion-staged-render-spec.json",
         visual_root / "render" / "remotion-render-manifest.json",
         visual_root / "render" / "remotion-render.log",
     )
