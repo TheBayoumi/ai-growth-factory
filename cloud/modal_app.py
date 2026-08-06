@@ -103,8 +103,12 @@ worker_image = (
             f"test \"$(git -C {VIMAX_ROOT} rev-parse HEAD)\" = {VIMAX_COMMIT}"
         ),
         f"python -m venv {VIMAX_ROOT}/.venv",
-        f"{VIMAX_ROOT}/.venv/bin/python -m pip install --upgrade pip wheel setuptools",
-        f"{VIMAX_ROOT}/.venv/bin/python -m pip install -e {VIMAX_ROOT}",
+        f"{VIMAX_ROOT}/.venv/bin/python -m pip install --upgrade pip wheel setuptools uv",
+        (
+            f"cd {VIMAX_ROOT} && "
+            f"UV_PROJECT_ENVIRONMENT={VIMAX_ROOT}/.venv "
+            f"{VIMAX_ROOT}/.venv/bin/uv sync --no-dev --no-install-project"
+        ),
     )
     .add_local_dir("renderer", RENDERER_DIR, copy=True)
     .add_local_dir("scripts", SCRIPTS_DIR, copy=True)
