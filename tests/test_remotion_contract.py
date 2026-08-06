@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from factory.remotion_bridge import stage_render_assets
+from factory.remotion_bridge import render_with_remotion, stage_render_assets
 from factory.remotion_contract import (
     RemotionContractError,
     build_remotion_render_spec,
@@ -93,6 +96,39 @@ class RemotionContractTests(unittest.TestCase):
             for shot in staged.shots:
                 self.assertFalse(Path(shot.media_path).is_absolute())
                 self.assertTrue((root / "stage" / "public" / shot.media_path).is_file())
+
+    def test_render_manifest_binds_to_persisted_staged_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            renderer = root / "renderer"
+            (renderer / "dist").mkdir(parents=True)
+            (renderer / "package.json").write_text("{}", encoding="utf-8")
+            (renderer / "dist" / "render.js").write_text("", encoding="utf-8")
+            workdir = root / "work"
+            output = workdir / "video.mp4"
+            spec = self._fixture(root)
+
+            def fake_run(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"video" * 120_000)
+                return SimpleNamespace(returncode=0, stdout="rendered", stderr="")
+
+            with patch.dict(os.environ, {"REMOTION_RENDERER_DIR": str(renderer)}), patch(
+                "factory.remotion_bridge.subprocess.run",
+                side_effect=fake_run,
+            ):
+                _output, manifest_path, _log = render_with_remotion(
+                    spec=spec,
+                    output_path=output,
+                    workdir=workdir,
+                )
+
+            persisted = workdir / "remotion-staged-render-spec.json"
+            self.assertTrue(persisted.is_file())
+            staged_payload = json.loads(persisted.read_text(encoding="utf-8"))
+            self.assertEqual("assets/narration.wav", staged_payload["audio_path"])
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(str(persisted), manifest["staged_render_spec"])
+            self.assertTrue(Path(manifest["staged_render_spec"]).is_file())
 
     def test_rejects_noncontiguous_timeline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
