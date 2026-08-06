@@ -6,7 +6,7 @@ on:
   # voice-recovery, media-contract, or Remotion path must trigger the exact end-to-end canary.
   push:
     branches:
-      - feat/vimax-remotion-pipeline
+      - verify/modal-gpu-editorial-v28-20260804
     paths:
       - ".github/workflows/vimax-remotion-canary.yml"
       - "cloud/modal_app.py"
