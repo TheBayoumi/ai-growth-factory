@@ -12,6 +12,7 @@ on:
       - "scripts/run_vimax_planner.py"
       - "tests/test_remotion_contract.py"
       - "tests/test_vimax_planner.py"
+      - "tests/test_vimax_camera_tree_repair.py"
       - ".github/workflows/remotion-ci.yml"
   workflow_dispatch:
 
