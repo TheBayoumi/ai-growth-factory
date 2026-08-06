@@ -47,7 +47,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "from factory.production_runtime import install_production_runtime; "
             "install_production_runtime()"
         )
-        deploy_step = "Deploy exact PR head to isolated Modal tag"
+        deploy_step = "Deploy exact requested ref to isolated Modal tag"
         self.assertIn(production_preflight, workflow)
         self.assertIn(deploy_step, workflow)
         self.assertLess(

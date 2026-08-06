@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from factory import production_video_qc
@@ -74,6 +75,22 @@ class ProductionVideoQCV10Tests(unittest.TestCase):
                 "thumbnail.png",
                 scene_media_types=["unknown"],
             )
+
+    def test_static_and_overactive_composed_stills_fail_the_quality_gate(self):
+        report = SimpleNamespace(
+            temporal_window_mean_differences=(0.0, 2.5, 0.35),
+            temporal_window_near_static_ratios=(1.0, 0.0, 0.0),
+            temporal_window_jump_ratios=(0.0, 1.0, 0.0),
+            temporal_window_max_differences=(0.0, 3.2, 0.5),
+        )
+
+        failures = production_video_qc.production_motion_failures(
+            ("image", "image", "video"), report
+        )
+
+        self.assertIn("image shot 0 is effectively static after composition", failures)
+        self.assertIn("image shot 1 has excessive camera motion", failures)
+        self.assertFalse(any("Wan shot 2" in failure for failure in failures))
 
 
 if __name__ == "__main__":

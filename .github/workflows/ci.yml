@@ -1,37 +1,41 @@
 name: CI
 
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact branch, tag, or SHA to verify
+        required: true
+        default: main
+        type: string
+      run_production_review:
+        description: Spend Modal quota on one full review render
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: ${{ startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-') && 'pr-ci-a10-production-verification' || format('pr-ci-{0}', github.event.pull_request.number) }}
+  group: ci-${{ github.event_name }}-${{ inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    if: github.event.action != 'closed' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.action == 'closed' && 'main' || github.event.pull_request.head.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
           cache: pip
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg libsndfile1
       - name: Install package and test tools
         run: |
           python -m pip install --upgrade pip
@@ -47,10 +51,7 @@ jobs:
 
   production-verification:
     needs: test
-    if: >-
-      github.event.action != 'closed' &&
-      github.event.pull_request.draft == false &&
-      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
+    if: github.event_name == 'workflow_dispatch' && inputs.run_production_review
     runs-on: ubuntu-latest
     timeout-minutes: 120
     environment: modal-production
@@ -58,10 +59,14 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
-      - name: Check out exact PR head
+      - name: Check out exact requested ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve immutable review SHA
+        shell: bash
+        run: echo "REVIEW_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Validate persistent Modal credentials
         shell: bash
@@ -94,10 +99,10 @@ jobs:
       - name: Verify Modal credential pair
         run: modal token info
 
-      - name: Deploy exact PR head to isolated Modal tag
+      - name: Deploy exact requested ref to isolated Modal tag
         env:
           MODAL_USE_FACTORY_SECRET: "false"
-        run: modal deploy cloud/modal_app.py --tag "${{ github.event.pull_request.head.sha }}"
+        run: modal deploy cloud/modal_app.py --tag "${REVIEW_SHA}"
 
       - name: Generate exact pre-merge production video
         id: production
@@ -200,6 +205,7 @@ jobs:
               "scene-media-manifest.json", "animated-captions.ass",
               "animated-captions.json", "visual-composition-manifest.json",
               "visual-pipeline-manifest.json", "visual-compositor.log",
+              "background-music.wav",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
@@ -209,7 +215,9 @@ jobs:
           contract = composition.get("editorial_contract") or {}
           contract_fields = (
               "name", "minimum_shots", "target_shots", "maximum_shots",
-              "maximum_shot_seconds", "first_ten_seconds_minimum_shots", "wan_shots",
+              "minimum_video_seconds", "maximum_video_seconds",
+              "minimum_shot_seconds", "maximum_shot_seconds",
+              "first_ten_seconds_minimum_shots", "wan_shots",
               "minimum_wpm", "maximum_wpm", "maximum_tempo_factor",
               "caption_minimum_seconds", "maximum_single_word_cues",
               "allow_asset_looping", "allow_destructive_caption_matte",
@@ -223,6 +231,9 @@ jobs:
           target_shots = int(contract["target_shots"])
           maximum_shots = int(contract["maximum_shots"])
           maximum_shot_seconds = float(contract["maximum_shot_seconds"])
+          minimum_shot_seconds = float(contract["minimum_shot_seconds"])
+          minimum_video_seconds = float(contract["minimum_video_seconds"])
+          maximum_video_seconds = float(contract["maximum_video_seconds"])
           opening_minimum = int(contract["first_ten_seconds_minimum_shots"])
           required_wan_shots = int(contract["wan_shots"])
           if not 8 <= minimum_shots <= target_shots <= maximum_shots <= 30:
@@ -233,6 +244,12 @@ jobs:
               raise SystemExit("Rendered profile permits source-asset looping")
           if contract["allow_destructive_caption_matte"] is not False:
               raise SystemExit("Rendered profile permits destructive caption mattes")
+          duration_seconds = float((result.get("video_qc") or {}).get("duration_seconds") or 0.0)
+          if not minimum_video_seconds <= duration_seconds <= maximum_video_seconds:
+              raise SystemExit(
+                  f"Video duration {duration_seconds:.3f}s is outside "
+                  f"{minimum_video_seconds:.1f}-{maximum_video_seconds:.1f}s"
+              )
 
           shots = composition.get("shots") or []
           if not minimum_shots <= len(shots) <= maximum_shots:
@@ -249,6 +266,10 @@ jobs:
           if max(float(item.get("duration_seconds", 99)) for item in shots) > maximum_shot_seconds + 0.02:
               raise SystemExit(
                   f"An editorial shot exceeds the {maximum_shot_seconds:.2f} second profile ceiling"
+              )
+          if min(float(item.get("duration_seconds", 0)) for item in shots) < minimum_shot_seconds - 0.02:
+              raise SystemExit(
+                  f"An editorial shot is below the {minimum_shot_seconds:.2f} second profile floor"
               )
           required_shot_fields = (
               "shot_id", "beat_index", "segment_id", "package_scene_index", "semantic_claim"
@@ -274,6 +295,12 @@ jobs:
                   )
 
           package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+          evidence = package.get("source_evidence") or []
+          evidence_urls = {str(item.get("url") or "") for item in evidence}
+          if evidence_urls != set(package.get("source_urls") or []):
+              raise SystemExit("Package does not preserve evidence for every selected source URL")
+          if any(not str(item.get("authority") or "").strip() for item in evidence):
+              raise SystemExit("One or more source records are missing authorial authority")
           narration = " ".join(str(package.get("narration") or "").split())
           if re.search(
               r"\b(?:fostering|enabling|supporting|driving|advancing|encouraging)\s+"
@@ -285,6 +312,9 @@ jobs:
               raise SystemExit("Source-asset looping is enabled")
           if composition.get("destructive_caption_matte") is not False:
               raise SystemExit("Destructive caption matte is enabled")
+          music = composition.get("background_music") or {}
+          if music.get("mixed_beneath_reviewed_narration") is not True:
+              raise SystemExit("The reviewed narration has no production music bed")
           if "-stream_loop" in (root / "visual-compositor.log").read_text(
               encoding="utf-8", errors="replace"
           ):
@@ -326,7 +356,13 @@ jobs:
                   )
 
           captions = json.loads((root / "animated-captions.json").read_text(encoding="utf-8"))
+          if captions.get("layout_version") != "v32-pixel-fitted-two-line":
+              raise SystemExit("Captions did not use the pixel-fitted layout")
+          if captions.get("all_cues_fit") is not True or captions.get("all_rendered_cues_fit") is not True:
+              raise SystemExit("Rendered caption bounds did not pass")
           cues = captions.get("cues") or []
+          if any("rendered_bbox_pixels" not in item for item in cues):
+              raise SystemExit("Caption cues lack rendered bounding-box evidence")
           one_word = sum(int(item.get("word_count") or 0) == 1 for item in cues)
           maximum_one_word = int(contract["maximum_single_word_cues"])
           if one_word > maximum_one_word:
@@ -345,35 +381,19 @@ jobs:
               )
 
           video_qc = result.get("video_qc") or {}
+          if video_qc.get("passed") is not True or video_qc.get("failures"):
+              raise SystemExit(f"Production motion/encoding QC did not pass: {video_qc}")
           if video_qc.get("width") != 1080 or video_qc.get("height") != 1920:
               raise SystemExit(f"Production video is not 1080x1920: {video_qc}")
           if float(video_qc.get("fps", 0.0)) < 29.0:
               raise SystemExit(f"Production frame rate is below 30 fps: {video_qc}")
+          visual_pipeline = json.loads(
+              (root / "visual-pipeline-manifest.json").read_text(encoding="utf-8")
+          )
+          environment_families = visual_pipeline.get("environment_families") or {}
+          if len(environment_families) < 4:
+              raise SystemExit(
+                  f"Visual plan lacks environment diversity: {environment_families}"
+              )
           print(json.dumps(result, indent=2, ensure_ascii=False))
           PY
-
-  deploy-reviewed-production:
-    needs: test
-    if: >-
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: modal-production
-    env:
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-    steps:
-      - name: Check out reviewed main
-        uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python -m pip install "modal==1.5.3"
-      - name: Deploy reviewed daily worker
-        env:
-          MODAL_USE_FACTORY_SECRET: "false"
-        run: modal deploy cloud/modal_app.py --tag "${GITHUB_SHA}"

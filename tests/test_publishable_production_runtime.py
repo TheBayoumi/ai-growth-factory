@@ -27,17 +27,22 @@ class PublishableProductionRuntimeTests(unittest.TestCase):
         self.assertIn('"VIDEO_HEIGHT": "1920"', source)
         self.assertIn('"VIDEO_FPS": "30"', source)
 
-    def test_production_runtime_has_no_camera_motion(self):
-        source = (ROOT / "factory" / "production_renderer.py").read_text(encoding="utf-8")
-        self.assertIn("xfade=transition=fade", source)
-        self.assertNotIn("zoompan", source)
-        self.assertNotIn("crop", source)
+    def test_production_runtime_has_bounded_deliberate_camera_motion(self):
+        source = (ROOT / "factory" / "production_editorial_compositor_v28.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("zoompan", source)
+        self.assertIn("0.075", source)
+        self.assertIn('"transition_seconds": _TRANSITION_SECONDS', source)
+        self.assertIn("aevalsrc", source)
+        self.assertIn("amix=inputs=2", source)
+        self.assertNotIn("random", source)
 
     def test_content_gate_rejects_generic_copy_phrases(self):
         source = (ROOT / "factory" / "production_content.py").read_text(encoding="utf-8")
         self.assertIn('"ai advancements"', source)
         self.assertIn('"shaping the future"', source)
-        self.assertIn("130-155 words", source)
+        self.assertIn("130-140 words", source)
         self.assertIn("ONE coherent, current story", source)
 
     def test_pacing_allows_bounded_pitch_preserving_segment_correction(self):

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import fetch_diverse_recent, fetch_recent
+from .feeds import SourceItem, fetch_diverse_recent, fetch_recent, source_authority
 from .llm_runtime import managed_llama_server
 from .policy import Strategy
 from .source_attributed_llm import generate_package
@@ -130,6 +130,7 @@ def _copy_visual_audit(workdir: Path, destination: Path) -> None:
         visual_root / "render" / "animated-captions.json",
         visual_root / "render" / "visual-composition-manifest.json",
         visual_root / "render" / "visual-compositor.log",
+        visual_root / "render" / "background-music.wav",
     )
     for path in candidates:
         _copy_if_exists(path, destination, path.name)
@@ -141,6 +142,7 @@ def _write_package(
     destination: Path,
     package: Any,
     *,
+    sources: list[SourceItem],
     source_publishers: set[str],
     source_max_age_hours: int,
     trend_snapshot: Any,
@@ -149,6 +151,20 @@ def _write_package(
     package_payload = asdict(package)
     package_payload["strategy"] = asdict(CANARY_STRATEGY)
     package_payload["source_feed_publishers"] = sorted(source_publishers)
+    sources_by_url = {source.url: source for source in sources}
+    package_payload["source_evidence"] = [
+        {
+            "url": source.url,
+            "publisher": source.publisher,
+            "author": source.author,
+            "authority": source_authority(source),
+            "title": source.title,
+            "published_at": source.published_at.isoformat(),
+            "summary": source.summary[:800],
+        }
+        for url in package.source_urls
+        if (source := sources_by_url.get(url)) is not None
+    ]
     package_payload["source_max_age_hours"] = source_max_age_hours
     package_payload["trend_signal_count"] = len(trend_snapshot.items)
     package_payload["trend_provider_status"] = dict(trend_snapshot.provider_status)
@@ -168,6 +184,7 @@ def _persist_generated_bundle(
     package: Any | None,
     voice: Any | None,
     visual: Any | None,
+    sources: list[SourceItem],
     source_publishers: set[str],
     source_max_age_hours: int | None,
     trend_snapshot: Any | None,
@@ -190,6 +207,7 @@ def _persist_generated_bundle(
         _write_package(
             destination,
             package,
+            sources=sources,
             source_publishers=source_publishers,
             source_max_age_hours=source_max_age_hours,
             trend_snapshot=trend_snapshot,
@@ -216,6 +234,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
     trend_snapshot = None
     trend_alignment = None
     source_publishers: set[str] = set()
+    sources: list[SourceItem] = []
 
     try:
         selection = fetch_diverse_recent(
@@ -279,6 +298,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             package=package,
             voice=voice,
             visual=visual,
+            sources=sources,
             source_publishers=source_publishers,
             source_max_age_hours=selection.max_age_hours,
             trend_snapshot=trend_snapshot,
@@ -378,6 +398,7 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             package=package,
             voice=voice,
             visual=visual,
+            sources=sources,
             source_publishers=source_publishers,
             source_max_age_hours=selection.max_age_hours if selection is not None else None,
             trend_snapshot=trend_snapshot,

@@ -85,10 +85,10 @@ class VisualStoryboardV30Tests(unittest.TestCase):
             "public research hall",
             "hands-on training bench",
             "data-storage hardware room",
-            "compact controlled test bench",
         )
         for environment in expected_environments:
             self.assertIn(environment, combined)
+        self.assertIn("controlled", combined)
         self.assertNotIn("old-fashioned laboratory", combined)
         self.assertEqual(len(set(prompts)), len(prompts))
 
@@ -180,10 +180,12 @@ class VisualStoryboardV30Tests(unittest.TestCase):
             source.index("install_production_visual_storyboard_v30()"),
             source.index("install_production_visual_atomic_storyboard_v34()"),
         )
-        self.assertLess(
-            source.index("install_production_visual_atomic_storyboard_v34()"),
-            source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
+        self.assertNotIn(
+            "image_generator.generate_keyframes = visual_pipeline.generate_keyframes",
+            source,
         )
+        editorial = Path("factory/production_editorial_v28.py").read_text(encoding="utf-8")
+        self.assertIn("visual_pipeline.generate_keyframes(expanded, keyframe_dir)", editorial)
 
 
 if __name__ == "__main__":

@@ -253,10 +253,12 @@ class ProductionVisualSemanticReviewV28Tests(unittest.TestCase):
             source.index("install_production_visual_convergence_v29()"),
             source.index("install_production_visual_prompt_cleanup_v29()"),
         )
-        self.assertLess(
-            source.index("install_production_visual_prompt_cleanup_v29()"),
-            source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
+        self.assertNotIn(
+            "image_generator.generate_keyframes = visual_pipeline.generate_keyframes",
+            source,
         )
+        editorial = Path("factory/production_editorial_v28.py").read_text(encoding="utf-8")
+        self.assertIn("visual_pipeline.generate_keyframes(expanded, keyframe_dir)", editorial)
 
 
 if __name__ == "__main__":

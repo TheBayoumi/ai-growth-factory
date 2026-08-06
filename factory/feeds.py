@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
+from urllib.parse import urlparse
 from xml.etree import ElementTree
 
 import requests
@@ -22,6 +23,7 @@ class SourceItem:
     published_at: datetime
     source_kind: str = "primary"
     trend_score: float = 0.0
+    author: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -30,6 +32,11 @@ class SourceItem:
     @property
     def is_primary(self) -> bool:
         return self.source_kind == "primary"
+
+    @property
+    def authority(self) -> str:
+        """Return the organization/person responsible for the article, not its host."""
+        return source_authority(self)
 
 
 @dataclass(frozen=True)
@@ -56,6 +63,29 @@ FEEDS: tuple[tuple[str, str], ...] = (
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _humanize_namespace(value: str) -> str:
+    cleaned = re.sub(r"[_-]+", " ", value).strip()
+    cleaned = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", cleaned)
+    return " ".join(cleaned.split())
+
+
+def source_authority(source: SourceItem) -> str:
+    """Resolve authorial authority while preserving publisher as distribution metadata.
+
+    Hugging Face team articles encode the author/organization in ``/blog/<namespace>/``.
+    Treating the hosting feed as the announcing company caused the rejected LFM2.5 render.
+    """
+    parsed = urlparse(source.url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.hostname and parsed.hostname.casefold().endswith("huggingface.co"):
+        if len(parts) >= 3 and parts[0].casefold() == "blog":
+            namespace = _humanize_namespace(parts[1])
+            if namespace and namespace.casefold() not in {"hugging face", "huggingface"}:
+                return namespace
+    author = " ".join(source.author.split()).strip()
+    return author or source.publisher.strip()
 
 
 def _clean(value: str | None) -> str:
@@ -107,9 +137,19 @@ def _parse(content: bytes, publisher: str) -> list[SourceItem]:
         title = _clean(_child_text(node, {"title"}))
         url = _link(node) or _child_text(node, {"guid", "id"})
         summary = _clean(_child_text(node, {"summary", "description", "content", "encoded"}))
+        author = _clean(_child_text(node, {"author", "creator"}))
         date_text = _child_text(node, {"published", "updated", "pubdate", "date"})
         if title and url:
-            items.append(SourceItem(publisher, title, url, summary[:1200], _date(date_text)))
+            items.append(
+                SourceItem(
+                    publisher,
+                    title,
+                    url,
+                    summary[:1200],
+                    _date(date_text),
+                    author=author[:240],
+                )
+            )
     return items
 
 

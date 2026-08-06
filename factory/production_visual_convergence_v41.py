@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import replace
 from typing import Any, Iterable
 
@@ -31,9 +33,9 @@ _CONCRETE_CONTROLLED_FRAME = StoryboardFrame(
 _CONCRETE_SOURCE_FRAME = StoryboardFrame(
     "source_grounded_ai",
     3,
-    "an indoor office server room with a short rack and one black tabletop AI appliance",
-    "one office IT technician beside a black tabletop AI appliance and short server rack",
-    "the technician connects one blue Ethernet cable from the appliance to the rack and checks green status lights",
+    "an office equipment room with one compact AI appliance and short server rack",
+    "one office IT technician beside the compact appliance",
+    "the technician connects the appliance to the rack with one blue Ethernet cable",
     "eye-level indoor photograph with the appliance, Ethernet cable, and rack filling the foreground",
     "black hardware, blue cable, green indicators, neutral office light",
 )
@@ -41,24 +43,248 @@ _CONCRETE_SOURCE_FRAME = StoryboardFrame(
 _CONCRETE_BUSINESS_FRAME = StoryboardFrame(
     "business_adoption",
     3,
-    "an indoor business server room with a short rack and one black tabletop local AI appliance",
-    "one office IT technician beside a black tabletop local AI appliance and short server rack",
-    "the technician connects one blue Ethernet cable from the appliance to the rack and checks green status lights",
+    "an office equipment room with one compact local AI appliance and short server rack",
+    "one office IT technician beside the compact appliance",
+    "the technician connects the appliance to the rack with one blue Ethernet cable",
     "eye-level indoor photograph with the appliance, Ethernet cable, and rack filling the foreground",
     "black hardware, blue cable, green indicators, neutral office light",
 )
 
-_FRAME_BANKS = dict(grounded_v40._FRAME_BANKS)
-_source_frames = list(_FRAME_BANKS["source_grounded_ai"])
-_source_frames[3] = _CONCRETE_SOURCE_FRAME
-_FRAME_BANKS["source_grounded_ai"] = tuple(_source_frames)
-_business_frames = list(_FRAME_BANKS["business_adoption"])
-_business_frames[3] = _CONCRETE_BUSINESS_FRAME
-_FRAME_BANKS["business_adoption"] = tuple(_business_frames)
+_DIVERSE_MODEL_RELEASE_FRAMES = (
+    StoryboardFrame(
+        "model_release", 0,
+        "a home-office desk with one laptop and one phone",
+        "one developer beside the laptop and phone",
+        "the developer runs the newly available model locally on both personal devices",
+        "close eye-level view across the two devices",
+        "natural daylight, graphite devices, soft blue accents",
+    ),
+    StoryboardFrame(
+        "model_release", 1,
+        "an electronics workbench with a compact computer and removable accelerator",
+        "one systems engineer beside the open compact computer",
+        "the engineer installs the accelerator and starts a local model validation",
+        "tight diagonal process view across the workbench",
+        "neutral task light, metallic hardware, cyan indicators",
+    ),
+    StoryboardFrame(
+        "model_release", 2,
+        "a robotics laboratory with a small mobile robot and edge computer",
+        "one robotics researcher beside the robot and edge computer",
+        "the researcher loads the model and starts an on-device navigation task",
+        "wide laboratory view with the moving robot foreground",
+        "bright laboratory light, white robot, blue equipment accents",
+    ),
+    StoryboardFrame(
+        "model_release", 3,
+        "a portable field kit with a rugged tablet and camera sensor",
+        "one field engineer beside the open portable kit",
+        "the engineer deploys the model to the tablet and tests the connected camera",
+        "medium outdoor-shelter documentary view of the complete kit",
+        "overcast daylight, rugged gray equipment, orange case accents",
+    ),
+)
+
+_DIVERSE_LOCAL_FRAMES = (
+    StoryboardFrame(
+        "local_inference", 0,
+        "a quiet home workspace with a laptop and phone disconnected from cloud hardware",
+        "one developer beside the laptop and phone",
+        "the developer completes an assistant task entirely on the personal devices",
+        "close candid view with both devices visible",
+        "warm window light, neutral desk, blue device accents",
+    ),
+    StoryboardFrame(
+        "local_inference", 1,
+        "a factory sensor station with one rugged edge computer",
+        "one controls engineer beside the sensor line and edge computer",
+        "the engineer processes live sensor input locally beside the machine",
+        "diagonal view from sensor to edge computer to machine",
+        "industrial gray, amber task light, cyan indicators",
+    ),
+    StoryboardFrame(
+        "local_inference", 2,
+        "a private clinic room with an offline medical workstation",
+        "one clinician beside the workstation and unlabelled imaging device",
+        "the clinician processes one image locally without sending it outside the room",
+        "calm eye-level view of the private workflow",
+        "clean white room, soft daylight, restrained teal accents",
+    ),
+    StoryboardFrame(
+        "local_inference", 3,
+        "a vehicle diagnostics bay with a compact edge computer",
+        "one technician beside the vehicle and connected edge computer",
+        "the technician analyzes sensor data locally while the vehicle remains connected",
+        "low three-quarter view across vehicle, cable, and computer",
+        "workshop daylight, dark equipment, blue cable accents",
+    ),
+    StoryboardFrame(
+        "local_inference", 4,
+        "a small retail back office with one local AI appliance",
+        "one store technician beside the appliance and inventory camera",
+        "the technician runs the camera workflow on the local appliance",
+        "human-scale view with the shop floor softly visible beyond",
+        "natural commercial light, black appliance, green indicators",
+    ),
+)
+
+_AGENT_WORKFLOW_FRAMES = (
+    StoryboardFrame(
+        "agent_workflow", 0,
+        "a robotics bench with a gripper, camera, and three physical tools",
+        "one robotics developer beside the gripper and tools",
+        "the developer starts a multi-step task as the gripper selects and uses each tool",
+        "tight process view following the tool sequence",
+        "bright task light, white bench, blue and orange tools",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 1,
+        "a small smart-home test room with lights, blinds, and a local hub",
+        "one test engineer beside the unbranded local hub",
+        "the engineer gives one request and the hub coordinates three device actions",
+        "wide room view showing the ordered physical changes",
+        "warm interior light, pale walls, green hub indicator",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 2,
+        "a research desk with a camera, microphone, robot, and laptop",
+        "one researcher beside the connected tools",
+        "the local agent moves from observation to tool choice to robot action",
+        "over-table view with a clear left-to-right workflow",
+        "neutral laboratory light, graphite devices, cyan accents",
+    ),
+    StoryboardFrame(
+        "agent_workflow", 3,
+        "a compact warehouse test lane with a mobile robot and sorting bins",
+        "one automation engineer beside the robot and bins",
+        "the robot inspects an object, chooses a bin, and completes the placement",
+        "low tracking-style locked view down the test lane",
+        "industrial daylight, gray robot, colored unlabelled bins",
+    ),
+)
+
+_LONG_CONTEXT_FRAMES = (
+    StoryboardFrame(
+        "long_context", 0,
+        "an archival research table with many unlabelled reports and one laptop",
+        "one analyst beside the arranged reports and laptop",
+        "the analyst connects evidence from early and late reports in one continuous review",
+        "high three-quarter view across the full evidence spread",
+        "warm reading light, neutral paper, dark laptop",
+    ),
+    StoryboardFrame(
+        "long_context", 1,
+        "an engineering project room with drawings, parts, and a workstation",
+        "one systems engineer beside the project history and prototype",
+        "the engineer traces a decision from old design material to the current prototype",
+        "wide wall-to-bench documentary composition",
+        "cool office light, pale drawings, metallic prototype",
+    ),
+    StoryboardFrame(
+        "long_context", 2,
+        "a legal review room with sealed case boxes and an offline workstation",
+        "one reviewer beside the ordered case materials",
+        "the reviewer compares distant parts of the case history without removing material",
+        "balanced eye-level view of boxes, desk, and reviewer",
+        "soft neutral light, brown boxes, graphite workstation",
+    ),
+    StoryboardFrame(
+        "long_context", 3,
+        "a laboratory notebook station beside a long-running physical experiment",
+        "one scientist beside stacked records and the active experiment",
+        "the scientist links earlier observations to the current sensor result",
+        "diagonal view from records to experiment to sensor",
+        "clean laboratory light, white records, blue sensors",
+    ),
+)
+
+_PERFORMANCE_FRAMES = (
+    StoryboardFrame(
+        "performance", 0,
+        "a benchmark bench with a laptop, compact desktop, and thermal sensors",
+        "one performance engineer beside both computers",
+        "the engineer runs the same model while sensors measure speed and heat",
+        "balanced comparison with both computers equally visible",
+        "neutral task light, graphite hardware, amber sensors",
+    ),
+    StoryboardFrame(
+        "performance", 1,
+        "a mobile-device lab with a phone, tablet, and power meter",
+        "one device engineer beside the three connected instruments",
+        "the engineer compares local generation while the power meter records each device",
+        "tight over-table view centered on devices and meter",
+        "bright laboratory light, black devices, cyan indicators",
+    ),
+    StoryboardFrame(
+        "performance", 2,
+        "a GPU test station with one accelerator server and cooling instrumentation",
+        "one infrastructure engineer beside the server and airflow sensors",
+        "the engineer increases concurrent workloads while monitoring the physical system",
+        "wide technical view of server, cooling, and engineer",
+        "dark hardware, green indicators, cool blue light",
+    ),
+    StoryboardFrame(
+        "performance", 3,
+        "a CPU evaluation desk with two compact computers and one stopwatch camera",
+        "one evaluator beside the two computers",
+        "the evaluator repeats the same local task on both machines for a fair comparison",
+        "eye-level symmetric comparison in one room",
+        "natural office light, silver and black computers, amber accent",
+    ),
+)
+
+_DIVERSE_BUSINESS_FRAMES = (
+    _CONCRETE_BUSINESS_FRAME,
+    StoryboardFrame(
+        "business_adoption", 1,
+        "a manufacturing inspection line with a local vision computer",
+        "one quality engineer beside the camera and local computer",
+        "the engineer routes inspection images through the local system beside the line",
+        "wide factory view with the inspected part foreground",
+        "industrial gray, white task light, cyan indicators",
+    ),
+    StoryboardFrame(
+        "business_adoption", 2,
+        "a private clinic office with one local workstation and imaging device",
+        "one clinical technician beside the workstation",
+        "the technician evaluates one image locally inside the clinic",
+        "calm eye-level documentary view of the private workflow",
+        "soft daylight, clean white surfaces, teal accents",
+    ),
+    StoryboardFrame(
+        "business_adoption", 3,
+        "a logistics desk beside a warehouse lane and compact edge appliance",
+        "one operations manager beside the appliance and parcel camera",
+        "the manager starts a local sorting workflow as parcels move through the lane",
+        "diagonal view connecting desk, appliance, and lane",
+        "warehouse daylight, dark appliance, orange parcel accents",
+    ),
+)
+
+_DIVERSE_SOURCE_FRAMES = (
+    _CONCRETE_SOURCE_FRAME,
+    _AGENT_WORKFLOW_FRAMES[2],
+    _PERFORMANCE_FRAMES[0],
+    _DIVERSE_LOCAL_FRAMES[1],
+    _LONG_CONTEXT_FRAMES[0],
+)
+
+_FRAME_BANKS = {
+    "local_inference": _DIVERSE_LOCAL_FRAMES,
+    "model_release": _DIVERSE_MODEL_RELEASE_FRAMES,
+    "business_adoption": _DIVERSE_BUSINESS_FRAMES,
+    "source_grounded_ai": _DIVERSE_SOURCE_FRAMES,
+    "agent_workflow": _AGENT_WORKFLOW_FRAMES,
+    "long_context": _LONG_CONTEXT_FRAMES,
+    "performance": _PERFORMANCE_FRAMES,
+}
 
 _TOPIC_ANCHORS = dict(grounded_v40._TOPIC_ANCHORS)
 _TOPIC_ANCHORS["controlled_test"] = "tabletop quality-control test on one metal part"
 _TOPIC_ANCHORS["business_adoption"] = "enterprise local AI deployment on private business infrastructure"
+_TOPIC_ANCHORS["agent_workflow"] = "on-device agent completing a visible multi-step tool workflow"
+_TOPIC_ANCHORS["long_context"] = "long-context model connecting distant evidence in one task"
+_TOPIC_ANCHORS["performance"] = "measured local AI performance on everyday computing hardware"
 
 _OBSERVED_NEGATIVES = {
     "source_grounded_ai": (
@@ -88,9 +314,6 @@ _OBSERVED_NEGATIVES = {
         "bicycle",
         "spacesuit",
         "weapon",
-        "robotics workshop",
-        "public research hub",
-        "factory floor",
         "multi-panel layout",
         "contact sheet",
         "image mosaic",
@@ -140,6 +363,30 @@ def classify_scene_v41(claim: str, direction: str = "") -> str:
     if any(
         term in text
         for term in (
+            "tool calling", "tool use", "multi-step", "multi step", "agentic",
+            "agent harness", "agents entirely", "agent workflow",
+        )
+    ):
+        return "agent_workflow"
+    if any(
+        term in text
+        for term in (
+            "128k", "context window", "long context", "memory requirement",
+            "training tokens", "distant evidence",
+        )
+    ):
+        return "long_context"
+    if any(
+        term in text
+        for term in (
+            "tokens per second", "tok/s", "cpu", "gpu", "h100", "m5 max",
+            "ryzen", "benchmark", "2.5 gb", "memory footprint", "inference speed",
+        )
+    ):
+        return "performance"
+    if any(
+        term in text
+        for term in (
             "locally",
             "local deployment",
             "local ai",
@@ -161,6 +408,9 @@ def classify_scene_v41(claim: str, direction: str = "") -> str:
             "model release",
             "release of",
             "the release",
+            "released",
+            "launched",
+            "introduced",
             "model's availability",
             "model availability",
             "new model",
@@ -214,6 +464,7 @@ def grounded_contract_for_v41(
         if category == "controlled_test"
         else _FRAME_BANKS[category]
     )
+    frame_index = resolved_index % len(frames)
     composition_index = (resolved_index // len(frames)) % len(grounded_v40._SHOT_COMPOSITIONS)
     composition_anchor = grounded_v40._SHOT_COMPOSITIONS[composition_index]
     topic_anchor = _TOPIC_ANCHORS[category]
@@ -227,7 +478,7 @@ def grounded_contract_for_v41(
             *forbidden,
         )
     return grounded_v40.GroundedSceneContractV40(
-        identity=f"{category}-{frame.variant}-c{composition_index}-v41",
+        identity=f"{category}-{frame_index}-c{composition_index}-v41",
         category=category,
         variant=frame.variant,
         composition_anchor=composition_anchor,
@@ -237,7 +488,7 @@ def grounded_contract_for_v41(
         action=frame.action,
         camera=clean(f"{composition_anchor}; {frame.camera}"),
         palette=frame.palette,
-        required_phrases=(topic_anchor, composition_anchor, frame.subject, frame.action),
+        required_phrases=(topic_anchor, frame.environment, frame.subject, frame.action),
         forbidden_substitutions=tuple(dict.fromkeys(forbidden)),
     )
 
@@ -256,6 +507,55 @@ def storyboard_frame_for_v41(
         contract.camera,
         contract.palette,
     )
+
+
+def _environment_family(environment: str) -> str:
+    value = clean(environment).casefold()
+    families = (
+        ("performance-lab", ("benchmark", "gpu test", "cpu evaluation", "power meter")),
+        ("robotics", ("robot", "gripper", "smart-home", "smart home")),
+        ("industrial-edge", ("factory", "manufacturing", "sensor line", "vehicle")),
+        ("healthcare", ("clinic", "medical")),
+        ("field-mobile", ("field kit", "portable", "rugged")),
+        ("business-operations", ("retail", "logistics", "warehouse", "business")),
+        ("research-evidence", ("archival", "legal review", "project room", "notebook")),
+        ("server-infrastructure", ("server room", "rack", "data center", "compute room")),
+        ("controlled-test", ("quality-control", "test bench", "measurement bench")),
+        ("personal-device", ("home", "laptop", "phone", "tablet", "personal device")),
+    )
+    for family, markers in families:
+        if any(marker in value for marker in markers):
+            return family
+    return "general-workspace"
+
+
+def validate_editorial_contract_diversity_v41(scenes: Iterable[Any]) -> dict[str, int]:
+    """Reject a prompt set that collapses into one environment before any GPU inference."""
+    scene_list = list(scenes)
+    contracts = [
+        grounded_contract_for_v41(str(scene.image_prompt), int(scene.scene_index))
+        for scene in scene_list
+    ]
+    families = Counter(_environment_family(contract.environment) for contract in contracts)
+    minimum_families = min(6, max(4, math.ceil(len(contracts) / 4)))
+    maximum_family_count = max(4, math.ceil(len(contracts) * 0.35))
+    if len(families) < minimum_families:
+        raise VisualConvergenceGateError(
+            f"Editorial plan uses only {len(families)} environment families; "
+            f"requires at least {minimum_families}: {dict(families)}"
+        )
+    crowded = {name: count for name, count in families.items() if count > maximum_family_count}
+    if crowded:
+        raise VisualConvergenceGateError(
+            "Editorial plan overuses one environment family: " + str(crowded)
+        )
+    identities = [contract.identity for contract in contracts]
+    duplicates = [name for name, count in Counter(identities).items() if count > 1]
+    if duplicates:
+        raise VisualConvergenceGateError(
+            "Editorial plan repeats executable shot contracts: " + ", ".join(duplicates)
+        )
+    return dict(families)
 
 
 def _feedback_negatives_v41(feedback: str) -> tuple[str, ...]:
@@ -339,13 +639,12 @@ def compile_convergent_prompt_v41(
         (
             "Photorealistic vertical documentary photograph",
             contract.topic_anchor,
-            contract.composition_anchor,
+            contract.environment,
             contract.subject,
             contract.action,
-            "one uninterrupted photograph from one camera viewpoint",
+            "one uninterrupted photograph",
         ),
         (
-            contract.environment,
             contract.camera,
             "ordinary work clothes realistic hands mechanically plausible indoor hardware",
             contract.palette,

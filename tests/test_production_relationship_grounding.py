@@ -65,7 +65,7 @@ class ProductionRelationshipGroundingTests(unittest.TestCase):
         self.assertIn("evaluated independently", repaired.narration)
         self.assertIn("OpenAI", repaired.title)
         self.assertGreaterEqual(len(repaired.narration.split()), 130)
-        self.assertLessEqual(len(repaired.narration.split()), 155)
+        self.assertLessEqual(len(repaired.narration.split()), 140)
         _validate_publishable_content(repaired, sources)
 
     def test_explicit_relationship_in_source_evidence_is_preserved(self):

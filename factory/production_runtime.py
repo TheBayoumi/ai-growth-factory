@@ -16,6 +16,7 @@ def install_production_runtime() -> None:
 
     from .production_audio_qc import install_production_audio_qc
     from .production_caption_quality import install_production_caption_quality
+    from .production_caption_layout_v32 import install_production_caption_layout_v32
     from .production_caption_zone import install_production_caption_zone
     from .production_content import install_production_content_gate
     from .production_editorial_v28 import install_production_editorial_v28
@@ -131,10 +132,12 @@ def install_production_runtime() -> None:
     install_production_visual_subject_authority_v31()
     install_production_visual_atomic_storyboard_v34()
     install_production_visual_retry_grounding_v35()
+    # Install the renderer last so the production path—not just unit tests—uses pixel-fitted ASS
+    # captions and verifies actual libass output bounds before composition.
+    install_production_caption_layout_v32()
 
-    from . import image_generator, production_editorial_v28, visual_pipeline
+    from . import production_editorial_v28
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
-    image_generator.generate_keyframes = visual_pipeline.generate_keyframes
     production_editorial_v28._compose_editorial_video = compose_editorial_video_v28
     _INSTALLED = True

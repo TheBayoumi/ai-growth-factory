@@ -371,10 +371,15 @@ def render_visual_plan_v28(
     output_height: int = 1920,
     output_fps: int = 30,
 ) -> Any:
-    from . import image_generator, video_generator, visual_pipeline
+    from . import video_generator, visual_pipeline
 
     profile = VideoProfile.from_env()
     total_duration = _audio_duration(audio_path)
+    if not profile.minimum_video_seconds <= total_duration <= profile.maximum_video_seconds:
+        raise ValueError(
+            f"Reviewed narration duration {total_duration:.3f}s is outside the production "
+            f"window {profile.minimum_video_seconds:.1f}-{profile.maximum_video_seconds:.1f}s"
+        )
     expanded, shots = build_editorial_plan(
         plan=plan,
         package=package,
@@ -382,6 +387,11 @@ def render_visual_plan_v28(
         total_duration=total_duration,
         profile=profile,
     )
+    from .production_visual_convergence_v41 import (
+        validate_editorial_contract_diversity_v41,
+    )
+
+    environment_families = validate_editorial_contract_diversity_v41(expanded.scenes)
     visual_root = workdir / "visual-assets"
     keyframe_dir = visual_root / "keyframes"
     scene_media_dir = visual_root / "scene-media"
@@ -402,7 +412,9 @@ def render_visual_plan_v28(
         encoding="utf-8",
     )
 
-    keyframes = image_generator.generate_keyframes(expanded, keyframe_dir)
+    # This is the reviewed/regenerating entry point installed by production visual quality.
+    # Calling image_generator directly bypassed that contract in the rejected PR implementation.
+    keyframes = visual_pipeline.generate_keyframes(expanded, keyframe_dir)
     visual_pipeline.release_accelerator_memory()
     scene_media = video_generator.generate_scene_media(expanded, keyframes, scene_media_dir)
     visual_pipeline.release_accelerator_memory()
@@ -434,6 +446,7 @@ def render_visual_plan_v28(
                 "shot_count": len(shots),
                 "source_asset_looping": False,
                 "destructive_caption_matte": False,
+                "environment_families": environment_families,
                 "shots": [item.as_dict() for item in shots],
             },
             indent=2,
@@ -530,8 +543,23 @@ def _install_video_qc() -> None:
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
         shots = timeline.get("shots") or []
         shot_durations = [float(item["duration_seconds"]) for item in shots]
+        if not profile.minimum_video_seconds <= report.duration_seconds <= profile.maximum_video_seconds:
+            failures.append(
+                f"video duration {report.duration_seconds:.3f}s is outside the production window"
+            )
         kwargs["scene_durations"] = shot_durations
-        kwargs["scene_media_types"] = ["video"] * len(shot_durations)
+        media_manifest = (
+            video_path.parent.parent / "scene-media" / "scene-media-manifest.json"
+        )
+        media_payload = json.loads(media_manifest.read_text(encoding="utf-8"))
+        media_assets = sorted(
+            media_payload.get("assets") or [],
+            key=lambda item: int(item.get("scene_index", -1)),
+        )
+        kwargs["scene_media_types"] = [
+            str(item.get("media_type") or "").strip().lower()
+            for item in media_assets
+        ]
         report_path = kwargs.get("report_path")
         report = current_verify(*args, **kwargs)
         failures = list(report.failures)
@@ -542,6 +570,8 @@ def _install_video_qc() -> None:
             failures.append(f"editorial shot count {len(shots)} exceeds {profile.maximum_shots}")
         if shots and max(shot_durations) > profile.maximum_shot_seconds + 0.02:
             failures.append("one or more editorial shots exceed the configured duration ceiling")
+        if shots and min(shot_durations) < profile.minimum_shot_seconds - 0.02:
+            failures.append("one or more editorial shots are below the configured duration floor")
         if (
             sum(float(item["start_seconds"]) < 10.0 for item in shots)
             < profile.first_ten_seconds_minimum_shots
@@ -560,10 +590,6 @@ def _install_video_qc() -> None:
         if "-stream_loop" in log_text:
             failures.append("FFmpeg source video looping was detected")
 
-        media_manifest = (
-            video_path.parent.parent / "scene-media" / "scene-media-manifest.json"
-        )
-        media_payload = json.loads(media_manifest.read_text(encoding="utf-8"))
         hashes = [
             str(item.get("sha256") or "")
             for item in media_payload.get("assets") or []
@@ -584,7 +610,16 @@ def _install_video_qc() -> None:
                 break
 
         caption_json = video_path.parent / "animated-captions.json"
-        cues = json.loads(caption_json.read_text(encoding="utf-8")).get("cues") or []
+        caption_payload = json.loads(caption_json.read_text(encoding="utf-8"))
+        cues = caption_payload.get("cues") or []
+        if caption_payload.get("layout_version") != "v32-pixel-fitted-two-line":
+            failures.append("caption track did not use the pixel-fitted production renderer")
+        if caption_payload.get("all_cues_fit") is not True:
+            failures.append("caption metric fitting did not pass")
+        if caption_payload.get("all_rendered_cues_fit") is not True:
+            failures.append("rendered libass caption bounds did not pass")
+        if any("rendered_bbox_pixels" not in item for item in cues):
+            failures.append("caption cues are missing rendered bounding-box evidence")
         single_word = sum(int(item.get("word_count") or 0) == 1 for item in cues)
         if single_word > profile.maximum_single_word_cues:
             failures.append(f"caption track contains {single_word} isolated one-word cues")

@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
 
 from factory.canary import _persist_generated_bundle
+from factory.feeds import SourceItem
 from factory.models import Scene, VideoPackage
 from factory.visual_compositor import _thumbnail
 
@@ -83,6 +85,15 @@ class ProductionArtifactPersistenceV10Tests(unittest.TestCase):
                 package=self._package(),
                 voice=voice,
                 visual=visual,
+                sources=[
+                    SourceItem(
+                        "Publisher",
+                        "AI support update",
+                        "https://example.com/source",
+                        "Primary evidence",
+                        datetime.now(timezone.utc),
+                    )
+                ],
                 source_publishers={"Publisher"},
                 source_max_age_hours=24,
                 trend_snapshot=snapshot,
@@ -99,6 +110,8 @@ class ProductionArtifactPersistenceV10Tests(unittest.TestCase):
                 destination / "visual-keyframes" / "scene-00-keyframe.png",
             )
             self.assertTrue(all(path.is_file() for path in required), required)
+            package_payload = (destination / "package.json").read_text(encoding="utf-8")
+            self.assertIn('"source_evidence"', package_payload)
 
 
 if __name__ == "__main__":

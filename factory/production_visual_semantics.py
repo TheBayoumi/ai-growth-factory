@@ -171,7 +171,9 @@ def install_production_visual_semantics() -> None:
         def scene_compiler(director_motion_prompt: str, **_kwargs: Any) -> Any:
             return compile_motion_prompt(
                 director_motion_prompt,
-                semantic_context=scene.image_prompt,
+                # The reviewed keyframe prompt contains the literal subject/action contract;
+                # the director prompt starts with generic boilerplate and previously displaced it.
+                semantic_context=keyframe.prompt,
                 role=scene.role,
             )
 

@@ -70,13 +70,23 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("state_volume.commit()", self.source)
         self.assertIn("hf_cache.commit()", self.source)
 
-    def test_pre_merge_production_is_gated_on_both_ci_matrix_jobs(self):
+    def test_paid_production_review_is_manual_and_follows_local_test_gate(self):
         self.assertIn("production-verification:", self.workflow)
         self.assertIn("needs: test", self.workflow)
-        self.assertIn('python-version: ["3.12", "3.13"]', self.workflow)
-        self.assertIn("github.event.action != 'closed'", self.workflow)
-        self.assertIn("github.event.pull_request.draft == false", self.workflow)
-        self.assertIn("startsWith(github.event.pull_request.head.ref, 'verify/modal-gpu-')", self.workflow)
+        self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertIn("run_production_review:", self.workflow)
+        self.assertIn("default: false", self.workflow)
+        self.assertIn(
+            "if: github.event_name == 'workflow_dispatch' && inputs.run_production_review",
+            self.workflow,
+        )
+        self.assertNotIn("pull_request:", self.workflow)
+        self.assertNotIn('python-version: ["3.12", "3.13"]', self.workflow)
+        deploy_workflow = (ROOT / ".github" / "workflows" / "modal-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("workflow_run:", deploy_workflow)
+        self.assertIn("workflow_dispatch:", deploy_workflow)
         self.assertFalse(DUPLICATE_PRODUCTION_WORKFLOW.exists())
 
     def test_production_workflow_uses_persistent_modal_secrets(self):
@@ -86,13 +96,15 @@ class ModalContractTests(unittest.TestCase):
         self.assertNotIn("modal token new", self.workflow)
         self.assertNotIn("Authorize Modal in browser", self.workflow)
 
-    def test_production_runs_from_the_exact_verified_pr_head(self):
-        self.assertIn("Check out exact PR head", self.workflow)
-        self.assertIn('ref: ${{ github.event.pull_request.head.sha }}', self.workflow)
+    def test_production_runs_from_the_exact_manually_requested_ref(self):
+        self.assertIn("Check out exact requested ref", self.workflow)
+        self.assertIn('ref: ${{ inputs.ref }}', self.workflow)
+        self.assertIn("REVIEW_SHA=$(git rev-parse HEAD)", self.workflow)
         self.assertIn("Production runtime import preflight passed", self.workflow)
-        self.assertIn("Deploy exact PR head to isolated Modal tag", self.workflow)
+        self.assertIn("Deploy exact requested ref to isolated Modal tag", self.workflow)
+        self.assertIn('modal deploy cloud/modal_app.py --tag "${REVIEW_SHA}"', self.workflow)
         self.assertIn("Generate exact pre-merge production video", self.workflow)
-        self.assertNotIn("Check out CI-verified main", self.workflow)
+        self.assertNotIn("github.event.pull_request", self.workflow)
         test_index = self.workflow.index("Unit and integration tests")
         production_index = self.workflow.index("production-verification:")
         self.assertLess(test_index, production_index)
@@ -119,6 +131,7 @@ class ModalContractTests(unittest.TestCase):
             "visual-composition-manifest.json",
             "visual-pipeline-manifest.json",
             "visual-compositor.log",
+            "background-music.wav",
         ):
             with self.subTest(name=name):
                 self.assertIn(f'"{name}"', self.workflow)

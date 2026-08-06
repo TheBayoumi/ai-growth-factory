@@ -9,7 +9,7 @@ import requests
 
 from . import local_llm
 from .config import Settings
-from .feeds import SourceItem
+from .feeds import SourceItem, source_authority
 from .models import VideoPackage
 from .policy import Strategy
 
@@ -37,6 +37,8 @@ def _selected_source_records(
             {
                 "source_url": url,
                 "publisher": source.publisher,
+                "author": source.author,
+                "authority": source_authority(source),
                 "title": source.title[:300],
                 "summary": source.summary[:1200],
             }

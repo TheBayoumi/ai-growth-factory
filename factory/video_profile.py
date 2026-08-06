@@ -22,6 +22,8 @@ class VideoProfile:
     maximum_tempo_factor: float = 1.15
     segment_pause_ms: int = 280
     pre_cta_pause_ms: int = 550
+    minimum_video_seconds: float = 55.0
+    maximum_video_seconds: float = 62.0
     minimum_shots: int = 16
     target_shots: int = 20
     maximum_shots: int = 24
@@ -49,6 +51,8 @@ class VideoProfile:
             raise ValueError("maximum_tempo_factor must be between 1.0 and 1.20")
         if not 8 <= self.minimum_shots <= self.target_shots <= self.maximum_shots <= 30:
             raise ValueError("shot-count limits are inconsistent")
+        if not 45.0 <= self.minimum_video_seconds < self.maximum_video_seconds <= 70.0:
+            raise ValueError("video-duration limits are inconsistent")
         if self.maximum_shots - self.target_shots > 8:
             raise ValueError("maximum_shots may exceed target_shots by at most eight")
         if not 1.0 <= self.minimum_shot_seconds < self.maximum_shot_seconds <= 6.0:

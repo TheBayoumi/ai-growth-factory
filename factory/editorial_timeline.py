@@ -372,8 +372,12 @@ def _wan_indices(shots: list[ShotSpec], profile: VideoProfile) -> set[int]:
     if len(eligible) < profile.wan_shots - 1:
         raise ValueError("Not enough short shots are available for the configured Wan budget")
     duration = sum(shot.duration_seconds for shot in shots)
-    targets = [duration * fraction for fraction in (0.52, 0.86)]
-    for target in targets[: profile.wan_shots - 1]:
+    additional = profile.wan_shots - 1
+    targets = [
+        duration * (index + 1) / (additional + 1)
+        for index in range(additional)
+    ]
+    for target in targets:
         candidate = min(
             (shot for shot in eligible if shot.shot_id not in selected),
             key=lambda shot: abs(shot.start_seconds - target),

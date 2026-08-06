@@ -605,6 +605,8 @@ def generate_package(settings: Settings, sources: list[SourceItem], strategy: St
         {
             "source_id": source_id,
             "publisher": item.publisher,
+            "author": item.author,
+            "authority": item.authority,
             "title": item.title,
             "url": item.url,
             "published_at": item.published_at.isoformat(),
@@ -620,6 +622,12 @@ def generate_package(settings: Settings, sources: list[SourceItem], strategy: St
     )
     prompt = f"""
 Use ONLY the supplied primary-source feed entries. Select one current AI development that can be responsibly explained using at least {settings.min_primary_sources} DISTINCT supplied publishers. A second publisher may provide context rather than independent confirmation, but do not imply independent confirmation when it is not present. Never invent dates, benchmarks, pricing, availability, quotes, partnerships, or capabilities.
+
+AUTHORSHIP CONTRACT:
+- ``publisher`` identifies the distribution feed or hosting platform; it is not automatically the company that created, launched, or released the subject.
+- ``authority`` identifies the article author or organization responsible for the announcement.
+- Attribute actions such as launched, released, introduced, published, or announced to ``authority`` only when the supplied title or summary supports that action.
+- A hosting platform may be named as the place where a model is available, but never as its creator merely because it hosts the article or model page.
 
 Creative strategy:
 - hook: {strategy.hook}

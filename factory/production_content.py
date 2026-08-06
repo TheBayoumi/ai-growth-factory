@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import replace
 from typing import Any
 
-from .feeds import SourceItem
+from .feeds import SourceItem, source_authority
 from .models import VideoPackage
 
 
@@ -65,15 +65,21 @@ _RELATIONSHIP_EVIDENCE_TERMS = (
     "worked together",
     "in partnership with",
 )
+_RELEASE_ACTOR_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z0-9&.+-]*(?:\s+[A-Z][A-Za-z0-9&.+-]*){0,4})\s+"
+    r"(?:(?:has|have|just)\s+)?(?:announced|launched|released|introduced|unveiled|published|open-sourced)\b"
+)
 _RULES = """
 PRODUCTION EDITORIAL RULES:
 - Tell ONE coherent, current story. One source may be the main evidence and another may add directly relevant context; never splice unrelated announcements into a broad trend.
 - The title and opening sentence must name a concrete company, product, policy, model, benchmark, or release from the supplied source titles.
+- Distinguish the article authority from the hosting publisher. Never say a feed or model-hosting platform launched or created something unless the supplied evidence explicitly says it did.
 - Open with the specific change and its consequence in the first 12 words. Do not begin with a generic industry overview.
-- Narration must be 130-155 words so the finished vertical video lands near 55-62 seconds at short-form pace.
+- Narration must be 130-140 words so the finished vertical video lands inside 55-62 seconds after natural pauses.
 - Avoid generic filler such as “AI advancements,” “leading advancements,” “shaping the future,” and “more effective, ethical, and accessible.”
 - Never describe selected publishers as collaborating, partnering, jointly developing, or confirming one another unless a supplied source explicitly states that relationship.
 - Every scene must add a distinct fact or implication. Do not repeat the same conclusion in different wording.
+- Use at least four concrete facts from the supplied title and summary. When the evidence contains measurements, preserve at least two of them exactly; do not replace context size, memory, CPU/GPU speed, or other measured capabilities with generic trend language.
 - Thumbnail text must name the concrete subject in 2-5 words.
 - Return zero-based source_index values only: with N source_urls, valid values are 0 through N-1.
 """.strip()
@@ -120,7 +126,7 @@ def _ground_generic_copy(
         return package
     primary = selected[0]
     subject = _short_subject(primary)
-    publisher = primary.publisher.strip()
+    authority = source_authority(primary)
     replacements: tuple[tuple[str, str], ...] = (
         ("reshaping the future of work", "changing how people work"),
         ("shaping the future of work", "changing how people work"),
@@ -142,7 +148,7 @@ def _ground_generic_copy(
     title = edit(package.title)
     source_specific = _tokens(primary.title) | _tokens(primary.publisher)
     if not (_tokens(title) & source_specific):
-        title = f"{publisher}: {subject}"
+        title = f"{authority}: {subject}"
     if len(title) < 28:
         title = f"{title} — What Changed"
     title = title[:78].rstrip(" -—:;,.")
@@ -150,7 +156,7 @@ def _ground_generic_copy(
     narration = edit(package.narration)
     sentences = re.split(r"(?<=[.!?])\s+", narration.strip(), maxsplit=1)
     if sentences and not (_tokens(sentences[0]) & source_specific):
-        concrete_hook = f"{publisher} just detailed {subject}, and the change matters now."
+        concrete_hook = f"{authority} just detailed {subject}, and the change matters now."
         narration = " ".join([concrete_hook, *sentences[1:]])
 
     thumbnail = edit(package.thumbnail_text)
@@ -223,6 +229,87 @@ def _validate_source_relationships(
             )
 
 
+def _authority_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.casefold())
+        if token not in {"ai", "the", "team", "labs", "lab"}
+    }
+
+
+def _validate_release_authority(
+    package: VideoPackage,
+    selected: list[SourceItem],
+) -> None:
+    """Reject a host/publisher claiming an announcement owned by another authority."""
+    from .local_llm import LocalLLMError
+
+    if not selected:
+        return
+    primary = selected[0]
+    authority = source_authority(primary)
+    if not authority or authority.casefold() == primary.publisher.casefold():
+        return
+    expected = _authority_tokens(authority)
+    publisher = _authority_tokens(primary.publisher)
+    opening = re.split(r"(?<=[.!?])\s+", package.narration.strip(), maxsplit=1)[0]
+    for label, text in (("title", package.title), ("opening sentence", opening)):
+        match = _RELEASE_ACTOR_RE.search(text)
+        if not match:
+            continue
+        actor = match.group(1)
+        actor_tokens = _authority_tokens(actor)
+        if actor_tokens & publisher and not actor_tokens & expected:
+            raise LocalLLMError(
+                f"Production {label} attributes the release to hosting publisher "
+                f"{primary.publisher!r}; supplied source authority is {authority!r}"
+            )
+
+
+def _evidence_numbers(value: str) -> set[str]:
+    numbers = {
+        match.replace(",", "").casefold()
+        for match in re.findall(r"(?<!\d)\d+(?:[.,]\d+)*(?!\d)", value)
+    }
+    return {
+        number
+        for number in numbers
+        if not (number.isdigit() and 2000 <= int(number) <= 2099)
+    }
+
+
+def _validate_evidence_specificity(
+    package: VideoPackage,
+    selected: list[SourceItem],
+) -> None:
+    """Require available measured evidence to survive into the publishable script."""
+    from .local_llm import LocalLLMError
+
+    if not selected:
+        return
+    evidence_numbers: set[str] = set()
+    for source in selected:
+        evidence_numbers.update(
+            _evidence_numbers(source.summary) - _evidence_numbers(source.title)
+        )
+    if not evidence_numbers:
+        return
+    copy = " ".join(
+        (
+            package.title,
+            package.narration,
+            *(scene.body for scene in package.scenes),
+        )
+    )
+    preserved = evidence_numbers & _evidence_numbers(copy)
+    required = min(2, len(evidence_numbers))
+    if len(preserved) < required:
+        raise LocalLLMError(
+            "Production copy replaced measured source evidence with generic language; "
+            f"requires {required} supplied measurement(s), preserved {sorted(preserved)}"
+        )
+
+
 def _validate_publishable_content(
     package: VideoPackage,
     sources: list[SourceItem],
@@ -237,9 +324,9 @@ def _validate_publishable_content(
             raise LocalLLMError(f"Production copy contains generic phrase: {phrase}")
 
     word_count = len(package.narration.split())
-    if not 130 <= word_count <= 155:
+    if not 130 <= word_count <= 140:
         raise LocalLLMError(
-            f"Production narration must contain 130-155 words; received {word_count}"
+            f"Production narration must contain 130-140 words; received {word_count}"
         )
     if not 28 <= len(package.title) <= 78:
         raise LocalLLMError(
@@ -255,6 +342,8 @@ def _validate_publishable_content(
         raise LocalLLMError("Selected sources contain no concrete title or publisher terms")
 
     _validate_source_relationships(package, selected)
+    _validate_release_authority(package, selected)
+    _validate_evidence_specificity(package, selected)
 
     first_sentence = re.split(r"(?<=[.!?])\s+", package.narration.strip(), maxsplit=1)[0]
     if not (_tokens(package.title) & source_specific):

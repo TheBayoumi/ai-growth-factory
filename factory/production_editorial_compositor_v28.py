@@ -12,12 +12,56 @@ from .models import NarrationSegment, VideoPackage
 from .video_profile import VideoProfile
 
 
-_TRANSITION_SECONDS = 0.16
+_TRANSITION_SECONDS = 0.08
 
 
 def _filter_path(path: Path) -> str:
     value = str(path.resolve()).replace("\\", "/")
     return value.replace(":", r"\:").replace("'", r"\'")
+
+
+def _write_ambient_music_bed(
+    output: Path,
+    *,
+    duration_seconds: float,
+    ffmpeg: str,
+) -> Path:
+    """Create a restrained, license-free ambient triad beneath the narration."""
+    fade_out_start = max(0.0, duration_seconds - 1.5)
+    expression = (
+        "0.035*(0.70+0.30*sin(2*PI*0.125*t)*sin(2*PI*0.125*t))*"
+        "(sin(2*PI*110*t)+0.55*sin(2*PI*164.81*t)+0.30*sin(2*PI*220*t))"
+    )
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"aevalsrc=exprs={expression}:s=48000:d={duration_seconds:.6f}",
+        "-af",
+        (
+            "highpass=f=70,lowpass=f=1200,"
+            "afade=t=in:st=0:d=1.2,"
+            f"afade=t=out:st={fade_out_start:.6f}:d=1.5"
+        ),
+        "-c:a",
+        "pcm_s16le",
+        str(output),
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0 or not output.is_file() or output.stat().st_size < 10_000:
+        raise RuntimeError(f"Ambient music generation failed: {completed.stderr[-2000:]}")
+    return output
 
 
 def compose_editorial_video_v28(
@@ -58,8 +102,11 @@ def compose_editorial_video_v28(
         raise ValueError("Editorial media indices are not contiguous")
     if [item.shot_id for item in ordered_shots] != list(range(len(ordered_shots))):
         raise ValueError("Editorial shot IDs are not contiguous")
-    if any(item.duration_seconds <= 0 for item in ordered_shots):
-        raise ValueError("Editorial shot duration must be positive")
+    if any(
+        item.duration_seconds < profile.minimum_shot_seconds - 1e-6
+        for item in ordered_shots
+    ):
+        raise ValueError("Editorial composition contains a shot below the duration floor")
     if any(item.duration_seconds > profile.maximum_shot_seconds + 1e-6 for item in ordered_shots):
         raise ValueError("Editorial composition contains an overlong shot")
     if len({str(item.path) for item in ordered_media}) != len(ordered_media):
@@ -87,6 +134,11 @@ def compose_editorial_video_v28(
         )
 
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    music_path = _write_ambient_music_bed(
+        workdir / "background-music.wav",
+        duration_seconds=total_duration,
+        ffmpeg=ffmpeg,
+    )
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     for asset, shot in zip(ordered_media, ordered_shots, strict=True):
         input_duration = shot.duration_seconds + _TRANSITION_SECONDS
@@ -107,6 +159,8 @@ def compose_editorial_video_v28(
             raise ValueError(f"Unsupported editorial media type: {asset.media_type}")
     audio_index = len(ordered_media)
     command += ["-i", str(audio_path)]
+    music_index = audio_index + 1
+    command += ["-i", str(music_path)]
 
     filters: list[str] = []
     for index, (asset, shot) in enumerate(zip(ordered_media, ordered_shots, strict=True)):
@@ -121,16 +175,29 @@ def compose_editorial_video_v28(
             "setsar=1,format=yuv420p"
         )
         if asset.media_type == "image":
+            frame_count = max(2, round(input_duration * fps))
+            last_frame = frame_count - 1
             zoom = (
-                "min(zoom+0.00055,1.055)"
+                f"1.0+0.075*on/{last_frame}"
                 if index % 2 == 0
-                else "max(1.055-0.00055*on,1.0)"
+                else f"1.075-0.075*on/{last_frame}"
             )
-            frame_count = max(1, round(input_duration * fps))
-            x = "iw/2-(iw/zoom/2)" if index % 3 else f"(iw-iw/zoom)*on/{frame_count}"
+            motion_pattern = index % 3
+            x = (
+                f"(iw-iw/zoom)*on/{last_frame}"
+                if motion_pattern == 0
+                else f"(iw-iw/zoom)*(1-on/{last_frame})"
+                if motion_pattern == 1
+                else "iw/2-(iw/zoom/2)"
+            )
+            y = (
+                "ih/2-(ih/zoom/2)"
+                if motion_pattern != 2
+                else f"(ih-ih/zoom)*on/{last_frame}"
+            )
             filters.append(
                 f"[{index}:v]{common},"
-                f"zoompan=z='{zoom}':x='{x}':y='ih/2-(ih/zoom/2)':"
+                f"zoompan=z='{zoom}':x='{x}':y='{y}':"
                 f"d=1:s={width}x{height}:fps={fps},{timing}[v{index}]"
             )
         else:
@@ -156,6 +223,16 @@ def compose_editorial_video_v28(
         f"[{previous}]subtitles=filename='{subtitles}':"
         "fontsdir='/usr/share/fonts/truetype/dejavu',format=yuv420p[vout]"
     )
+    filters.extend(
+        (
+            f"[{audio_index}:a]aresample=48000,asetpts=N/SR/TB[voice]",
+            f"[{music_index}:a]aresample=48000,asetpts=N/SR/TB[music]",
+            (
+                "[voice][music]amix=inputs=2:duration=first:dropout_transition=0:"
+                "normalize=0,alimiter=limit=0.95[aout]"
+            ),
+        )
+    )
 
     output = workdir / "video.mp4"
     command += [
@@ -164,7 +241,7 @@ def compose_editorial_video_v28(
         "-map",
         "[vout]",
         "-map",
-        f"{audio_index}:a",
+        "[aout]",
         "-c:v",
         "libx264",
         "-preset",
@@ -221,7 +298,13 @@ def compose_editorial_video_v28(
         "realized_wan_shots": wan_assets,
         "source_asset_looping": False,
         "destructive_caption_matte": False,
-        "still_motion": "deterministic_ken_burns",
+        "still_motion": "deterministic_ken_burns_7_5_percent_three_axis",
+        "transition_seconds": _TRANSITION_SECONDS,
+        "background_music": {
+            "path": str(music_path),
+            "source": "deterministic_license_free_ambient_triads",
+            "mixed_beneath_reviewed_narration": True,
+        },
         "pixel_format": "yuv420p",
         "constant_frame_rate": fps,
         "caption_layer": str(caption_path),
@@ -235,6 +318,7 @@ def compose_editorial_video_v28(
             "height": height,
             "fps": fps,
             "audio_path": str(audio_path),
+            "background_music_path": str(music_path),
         },
     }
     (workdir / "visual-composition-manifest.json").write_text(

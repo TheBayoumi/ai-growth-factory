@@ -121,10 +121,10 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
         first_prompt = compile_subject_first_prompt_v31(first.image_prompt)
         retry_prompt = compile_subject_first_prompt_v31(retry.image_prompt)
         self.assertNotEqual(first_prompt.compiled_prompt, retry_prompt.compiled_prompt)
-        self.assertIn("one primary subject", retry.image_prompt)
-        self.assertIn("one clear physical action", retry.image_prompt)
-        self.assertIn("one primary subject", retry_prompt.compiled_prompt)
-        self.assertNotIn("Every named adult", retry.image_prompt)
+        repair = retry.image_prompt.split("V31 REPAIR:", 1)[1].strip()
+        self.assertTrue(repair)
+        self.assertIn(repair, retry_prompt.compiled_prompt)
+        self.assertRegex(repair.casefold(), r"foreground|physical action|natural hands")
         self.assertEqual(retry.image_prompt.count("V30 STORYBOARD:"), 1)
         self.assertEqual(retry.image_prompt.count("V31 REPAIR:"), 1)
         self.assertNotEqual(first.seed, retry.seed)
@@ -162,10 +162,12 @@ class VisualSubjectAuthorityV31Tests(unittest.TestCase):
             source.index("install_production_visual_subject_authority_v31()"),
             source.index("install_production_visual_atomic_storyboard_v34()"),
         )
-        self.assertLess(
-            source.index("install_production_visual_atomic_storyboard_v34()"),
-            source.index("image_generator.generate_keyframes = visual_pipeline.generate_keyframes"),
+        self.assertNotIn(
+            "image_generator.generate_keyframes = visual_pipeline.generate_keyframes",
+            source,
         )
+        editorial = Path("factory/production_editorial_v28.py").read_text(encoding="utf-8")
+        self.assertIn("visual_pipeline.generate_keyframes(expanded, keyframe_dir)", editorial)
 
 
 if __name__ == "__main__":

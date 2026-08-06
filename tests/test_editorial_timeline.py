@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
-from factory.editorial_timeline import build_editorial_plan
+from factory.editorial_timeline import _wan_indices, build_editorial_plan
 from factory.models import NarrationSegment, Scene, VideoPackage
 from factory.video_profile import VideoProfile
 from factory.visual_prompt import SceneVisualPrompt, VisualPlan
@@ -118,6 +119,20 @@ class EditorialTimelineTests(unittest.TestCase):
         self.assertTrue(all(0 <= shot.package_scene_index < 6 for shot in shots))
         self.assertTrue(all(shot.semantic_claim.startswith("Narration beat") for shot in shots))
         self.assertEqual(len({shot.shot_id for shot in shots}), len(shots))
+
+    def test_wan_allocator_supports_more_than_three_configured_shots(self) -> None:
+        _, shots = build_editorial_plan(
+            plan=self._plan(),
+            package=self._package(),
+            segments=self._segments(),
+            total_duration=56.147,
+            profile=VideoProfile(),
+        )
+        selected = _wan_indices(shots, replace(VideoProfile(), wan_shots=6))
+
+        self.assertEqual(len(selected), 6)
+        self.assertIn(0, selected)
+        self.assertEqual(len(selected), len(set(selected)))
 
     def test_real_canary_duration_uses_active_sentence_aligned_shot_profile(self) -> None:
         package = self._package()

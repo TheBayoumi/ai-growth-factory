@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from PIL import Image
 
+from factory.models import NarrationSegment
+from factory.production_caption_layout_v32 import write_pixel_fitted_caption_track
 from factory.production_editorial_v28 import (
     _caption_chunks,
     _plain_caption,
@@ -46,6 +51,30 @@ class ProductionEditorialV28Tests(unittest.TestCase):
         rendered = _plain_caption(cue, lambda value: value)
         self.assertEqual(rendered, cue.text)
         self.assertNotIn("\\kf", rendered)
+
+    def test_caption_layout_proves_actual_libass_pixels_are_inside_safe_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            segments = (
+                NarrationSegment(
+                    0,
+                    "Liquid AI released an on-device model with multi-step tool calling.",
+                    "test",
+                    root / "segment.wav",
+                    0.0,
+                    5.0,
+                ),
+            )
+            output = root / "captions.ass"
+
+            write_pixel_fitted_caption_track(segments, output)
+            manifest = json.loads(output.with_suffix(".json").read_text(encoding="utf-8"))
+
+            self.assertTrue(manifest["all_cues_fit"])
+            self.assertTrue(manifest["all_rendered_cues_fit"])
+            self.assertTrue(
+                all("rendered_bbox_pixels" in cue for cue in manifest["cues"])
+            )
 
 
 if __name__ == "__main__":
