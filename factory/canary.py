@@ -19,6 +19,7 @@ from .feeds import (
 )
 from .llm_runtime import managed_llama_server
 from .policy import Strategy
+from .production_editorial_v28 import validate_static_editorial_preflight
 from .source_attributed_llm import generate_package
 from .trend_ranking import align_primary_sources_to_trends
 from .trend_sources import fetch_trend_snapshot
@@ -140,6 +141,21 @@ def _copy_visual_audit(workdir: Path, destination: Path) -> None:
     )
     for path in candidates:
         _copy_if_exists(path, destination, path.name)
+    preflight_root = visual_root / "preflight"
+    for path in sorted(preflight_root.glob("static-preflight-attempt-*.json")):
+        _copy_if_exists(path, destination, path.name)
+    for path, name in (
+        (preflight_root / "static-preflight.json", "static-preflight.json"),
+        (preflight_root / "production-preflight.json", "production-preflight.json"),
+        (preflight_root / "production-captions.ass", "preflight-captions.ass"),
+        (preflight_root / "production-captions.json", "preflight-captions.json"),
+        (preflight_root / "animatic" / "video.mp4", "preflight-animatic.mp4"),
+        (
+            preflight_root / "animatic" / "visual-composition-manifest.json",
+            "preflight-composition-manifest.json",
+        ),
+    ):
+        _copy_if_exists(path, destination, name)
     _copy_keyframes(workdir, destination)
     _copy_scene_media(workdir, destination)
 
@@ -271,11 +287,25 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
 
         with managed_llama_server(settings, research_dir):
             package = generate_package(settings, sources, CANARY_STRATEGY)
+            preflight_attempt = 0
+
+            def validate_plan(plan: Any) -> None:
+                nonlocal preflight_attempt
+                preflight_attempt += 1
+                validate_static_editorial_preflight(
+                    settings=settings,
+                    plan=plan,
+                    package=package,
+                    workdir=workdir,
+                    attempt=preflight_attempt,
+                )
+
             visual_plan = construct_visual_plan(
                 settings,
                 package,
                 sources,
                 CANARY_STRATEGY,
+                plan_validator=validate_plan,
             )
 
         if len(set(package.source_publishers)) < settings.min_primary_sources:

@@ -82,6 +82,8 @@ class PipelineTests(unittest.TestCase):
         ), patch("factory.pipeline.generate_package", return_value=package), patch(
             "factory.pipeline.construct_visual_plan", return_value=visual_plan
         ) as construct_visual, patch(
+            "factory.pipeline.validate_static_editorial_preflight"
+        ) as static_preflight, patch(
             "factory.pipeline.build_reviewed_narration"
         ) as voice, patch("factory.pipeline.render_visual_plan") as render_visual, patch(
             "factory.pipeline.verify_video_output"
@@ -122,6 +124,10 @@ class PipelineTests(unittest.TestCase):
                 scene_media=(),
             )
             verify.return_value = SimpleNamespace(as_dict=lambda: {"passed": True})
+            static_preflight.return_value = None
+            construct_visual.side_effect = lambda *args, **kwargs: (
+                kwargs["plan_validator"](visual_plan) or visual_plan
+            )
             result = run_factory(Settings.from_env())
         self.assertEqual(result["status"], "published")
         contract = voice.call_args.kwargs["voice_contract"]
@@ -130,6 +136,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("urgent", contract.baseline_style)
         fake_youtube.upload.assert_called_once()
         construct_visual.assert_called_once()
+        static_preflight.assert_called_once()
         render_visual.assert_called_once()
         self.assertIn("segments", render_visual.call_args.kwargs)
         self.assertEqual(render_visual.call_args.kwargs["audio_path"], audio)

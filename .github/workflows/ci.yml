@@ -119,6 +119,7 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import hashlib
           import json
           import re
           from pathlib import Path
@@ -208,6 +209,9 @@ jobs:
               "animated-captions.json", "visual-composition-manifest.json",
               "visual-pipeline-manifest.json", "visual-compositor.log",
               "background-music.wav",
+              "static-preflight.json", "production-preflight.json",
+              "preflight-captions.ass", "preflight-captions.json",
+              "preflight-animatic.mp4", "preflight-composition-manifest.json",
           )
           missing = [name for name in required if not (root / name).exists()]
           if missing:
@@ -215,6 +219,46 @@ jobs:
 
           composition = json.loads((root / "visual-composition-manifest.json").read_text(encoding="utf-8"))
           contract = composition.get("editorial_contract") or {}
+          contract_sha = hashlib.sha256(
+              json.dumps(
+                  contract,
+                  sort_keys=True,
+                  separators=(",", ":"),
+                  ensure_ascii=False,
+              ).encode("utf-8")
+          ).hexdigest()
+          static_preflight = json.loads(
+              (root / "static-preflight.json").read_text(encoding="utf-8")
+          )
+          production_preflight = json.loads(
+              (root / "production-preflight.json").read_text(encoding="utf-8")
+          )
+          if static_preflight.get("status") != "passed":
+              raise SystemExit(f"Static preflight did not pass: {static_preflight}")
+          if static_preflight.get("phase") != "static_before_tts":
+              raise SystemExit("Static preflight ran at the wrong pipeline phase")
+          if production_preflight.get("status") != "passed":
+              raise SystemExit(f"Exact production preflight did not pass: {production_preflight}")
+          if production_preflight.get("phase") != "exact_before_visual_inference":
+              raise SystemExit("Exact preflight ran at the wrong pipeline phase")
+          preflight_contracts = {
+              str(static_preflight.get("quality_contract_sha256") or ""),
+              str(production_preflight.get("quality_contract_sha256") or ""),
+              contract_sha,
+          }
+          if preflight_contracts != {contract_sha}:
+              raise SystemExit(
+                  "Static preflight, exact animatic, and final render used different contracts"
+              )
+          animatic_sha = hashlib.sha256(
+              (root / "preflight-animatic.mp4").read_bytes()
+          ).hexdigest()
+          if animatic_sha != production_preflight.get("animatic_sha256"):
+              raise SystemExit("Preflight animatic digest does not match its manifest")
+          if int(production_preflight.get("transition_count", -1)) != int(
+              production_preflight.get("shot_count", 0)
+          ) - 1:
+              raise SystemExit("Preflight animatic did not realize every planned transition")
           contract_fields = (
               "name", "minimum_shots", "target_shots", "maximum_shots",
               "minimum_video_seconds", "maximum_video_seconds",
@@ -392,6 +436,11 @@ jobs:
           visual_pipeline = json.loads(
               (root / "visual-pipeline-manifest.json").read_text(encoding="utf-8")
           )
+          preflight_binding = visual_pipeline.get("preflight") or {}
+          if preflight_binding.get("status") != "passed":
+              raise SystemExit("Visual inference was not bound to a passing preflight")
+          if preflight_binding.get("quality_contract_sha256") != contract_sha:
+              raise SystemExit("Visual inference used a different contract than preflight")
           environment_families = visual_pipeline.get("environment_families") or {}
           if len(environment_families) < 4:
               raise SystemExit(

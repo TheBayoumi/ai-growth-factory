@@ -6,7 +6,7 @@ import os
 import re
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -449,8 +449,10 @@ def construct_visual_plan(
     package: VideoPackage,
     sources: list[SourceItem],
     strategy: Strategy,
+    *,
+    plan_validator: Callable[[VisualPlan], None] | None = None,
 ) -> VisualPlan:
-    """Autonomously construct and validate source-grounded image and motion prompts."""
+    """Construct and repair a plan until its executable production preflight passes."""
     if len(package.scenes) != 6:
         raise VisualPromptError("The visual director requires exactly six scenes")
     source_context = _selected_source_context(package, sources)
@@ -466,12 +468,15 @@ def construct_visual_plan(
                 settings,
                 _director_prompt(payload, feedback=feedback),
             )
-            return _validate_and_normalize(
+            plan = _validate_and_normalize(
                 raw,
                 package=package,
                 settings=settings,
                 director_input_sha256=payload_sha,
             )
+            if plan_validator is not None:
+                plan_validator(plan)
+            return plan
         except Exception as exc:
             last_error = exc
             feedback = str(exc)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
 import sys
 import wave
-from dataclasses import replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -22,6 +23,462 @@ from .visual_prompt_compiler import CompiledVisualPrompt
 _INSTALLED = False
 _TRANSITION_SECONDS = 0.16
 _SPACE_RE = re.compile(r"\s+")
+
+
+class ProductionPreflightError(ValueError):
+    """Stop the production pipeline before expensive media inference."""
+
+
+@dataclass(frozen=True)
+class EditorialPreflightResult:
+    plan: VisualPlan
+    shots: tuple[ShotSpec, ...]
+    environment_families: dict[str, int]
+    quality_contract_sha256: str
+    manifest_path: Path
+    animatic_path: Path
+
+
+def _json_sha256(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _projected_narration_segments(
+    settings: Any,
+    package: VideoPackage,
+    profile: VideoProfile,
+) -> tuple[tuple[NarrationSegment, ...], float]:
+    """Create deterministic target-WPM timing without loading TTS or a reviewer."""
+    from . import voice_pipeline
+
+    texts = voice_pipeline.split_narration(
+        package.narration,
+        settings.narration_segments,
+    )
+    if not texts:
+        raise ProductionPreflightError("Narration produced no projected voice segments")
+    word_counts = [max(1, len(text.split())) for text in texts]
+    speech_seconds = sum(word_counts) * 60.0 / profile.target_wpm
+    pauses = [profile.segment_pause_ms / 1000.0] * max(0, len(texts) - 1)
+    if pauses:
+        pauses[-1] = profile.pre_cta_pause_ms / 1000.0
+    total_duration = speech_seconds + sum(pauses)
+    if not profile.minimum_video_seconds <= total_duration <= profile.maximum_video_seconds:
+        raise ProductionPreflightError(
+            f"Projected narration duration {total_duration:.3f}s is outside the frozen "
+            f"production window {profile.minimum_video_seconds:.1f}-"
+            f"{profile.maximum_video_seconds:.1f}s"
+        )
+
+    cursor = 0.0
+    segments: list[NarrationSegment] = []
+    for index, (text, word_count) in enumerate(zip(texts, word_counts, strict=True)):
+        duration = word_count * 60.0 / profile.target_wpm
+        start = cursor
+        end = start + duration
+        segments.append(
+            NarrationSegment(
+                segment_id=index,
+                text=text,
+                instruction="deterministic preflight timing",
+                audio_path=Path("preflight-no-audio.wav"),
+                start_seconds=round(start, 6),
+                end_seconds=round(end, 6),
+            )
+        )
+        cursor = end + (pauses[index] if index < len(pauses) else 0.0)
+    return tuple(segments), round(total_duration, 6)
+
+
+def validate_static_editorial_preflight(
+    *,
+    settings: Any,
+    plan: VisualPlan,
+    package: VideoPackage,
+    workdir: Path,
+    attempt: int,
+) -> dict[str, Any]:
+    """Validate the executable plan and production captions before TTS or visual inference."""
+    from . import caption_renderer
+    from .production_visual_convergence_v41 import (
+        validate_editorial_contract_diversity_v41,
+    )
+
+    preflight_root = workdir / "visual-assets" / "preflight"
+    attempt_path = preflight_root / f"static-preflight-attempt-{attempt}.json"
+    profile = VideoProfile.from_env()
+    profile_payload = profile.as_dict()
+    contract_sha = _json_sha256(profile_payload)
+    try:
+        segments, projected_duration = _projected_narration_segments(
+            settings,
+            package,
+            profile,
+        )
+        expanded, shots = build_editorial_plan(
+            plan=plan,
+            package=package,
+            segments=segments,
+            total_duration=projected_duration,
+            profile=profile,
+        )
+        environment_families = validate_editorial_contract_diversity_v41(
+            expanded.scenes
+        )
+        captions = preflight_root / f"static-captions-attempt-{attempt}.ass"
+        caption_renderer.write_animated_caption_track(
+            segments,
+            captions,
+            width=settings.width,
+            height=settings.height,
+        )
+        caption_manifest = json.loads(
+            captions.with_suffix(".json").read_text(encoding="utf-8")
+        )
+        if caption_manifest.get("all_cues_fit") is not True:
+            raise ProductionPreflightError("Projected production captions do not fit")
+        if caption_manifest.get("all_rendered_cues_fit") is not True:
+            raise ProductionPreflightError(
+                "Projected captions failed the rendered libass bounds proof"
+            )
+        if sum(shot.renderer == "wan_i2v" for shot in shots) != profile.wan_shots:
+            raise ProductionPreflightError("Projected timeline changed the frozen Wan budget")
+
+        payload = {
+            "status": "passed",
+            "phase": "static_before_tts",
+            "attempt": attempt,
+            "quality_contract": profile_payload,
+            "quality_contract_sha256": contract_sha,
+            "package_sha256": _json_sha256(asdict(package)),
+            "visual_plan_sha256": _json_sha256(plan.as_dict()),
+            "projected_duration_seconds": projected_duration,
+            "shot_count": len(shots),
+            "wan_shots": sum(shot.renderer == "wan_i2v" for shot in shots),
+            "environment_families": environment_families,
+            "caption_manifest": str(captions.with_suffix(".json")),
+            "checks": {
+                "source_script_package_gate": True,
+                "executable_editorial_timeline": True,
+                "shot_duration_bounds": True,
+                "opening_density": True,
+                "environment_diversity": True,
+                "rendered_caption_bounds": True,
+            },
+        }
+        _write_json(attempt_path, payload)
+        _write_json(preflight_root / "static-preflight.json", payload)
+        return payload
+    except Exception as exc:
+        payload = {
+            "status": "failed",
+            "phase": "static_before_tts",
+            "attempt": attempt,
+            "quality_contract": profile_payload,
+            "quality_contract_sha256": contract_sha,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+        _write_json(attempt_path, payload)
+        raise ProductionPreflightError(
+            f"Static production preflight attempt {attempt} failed: {exc}"
+        ) from exc
+
+
+def _placeholder_media(
+    *,
+    plan: VisualPlan,
+    shots: Sequence[ShotSpec],
+    output_dir: Path,
+    width: int,
+    height: int,
+    fps: int,
+) -> tuple[Any, ...]:
+    """Create unique cheap assets for exercising the real compositor before GPU inference."""
+    from .video_generator import SceneMediaAsset
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    assets: list[SceneMediaAsset] = []
+    for scene, shot in zip(plan.scenes, shots, strict=True):
+        digest = hashlib.sha256(
+            f"{shot.shot_id}|{shot.seed}|{shot.semantic_claim}".encode("utf-8")
+        ).digest()
+        color = tuple(38 + int(value) % 160 for value in digest[:3])
+        image = Image.new("RGB", (width, height), color)
+        band = max(8, height // 18)
+        for offset in range(0, height, band * 3):
+            accent = tuple(min(235, channel + 22) for channel in color)
+            image.paste(accent, (0, offset, width, min(height, offset + band)))
+        keyframe = output_dir / f"shot-{shot.shot_id:02d}.png"
+        image.save(keyframe, format="PNG")
+
+        media_type = "video" if shot.renderer == "wan_i2v" else "image"
+        media_path = keyframe
+        if media_type == "video":
+            media_path = output_dir / f"shot-{shot.shot_id:02d}.mp4"
+            command = [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-loop",
+                "1",
+                "-framerate",
+                str(fps),
+                "-i",
+                str(keyframe),
+                "-t",
+                f"{shot.duration_seconds + 0.12:.6f}",
+                "-vf",
+                f"scale={width}:{height},fps={fps},format=yuv420p",
+                "-an",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "34",
+                "-pix_fmt",
+                "yuv420p",
+                str(media_path),
+            ]
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if completed.returncode != 0 or not media_path.is_file():
+                raise ProductionPreflightError(
+                    "Preflight placeholder video generation failed: "
+                    + completed.stderr[-2000:]
+                )
+
+        assets.append(
+            SceneMediaAsset(
+                scene_index=shot.shot_id,
+                media_type=media_type,
+                path=media_path,
+                keyframe_path=keyframe,
+                model="deterministic-preflight-placeholder",
+                seed=shot.seed,
+                prompt=scene.image_prompt,
+                sha256=_file_sha256(media_path),
+                director_prompt=scene.image_prompt,
+                prompt_word_count=len(scene.image_prompt.split()),
+                prompt_word_budget=max(1, len(scene.image_prompt.split())),
+                prompt_compiler_version="preflight-placeholder-v1",
+            )
+        )
+    return tuple(assets)
+
+
+def validate_exact_editorial_preflight(
+    *,
+    plan: VisualPlan,
+    package: VideoPackage,
+    segments: Sequence[NarrationSegment],
+    audio_path: Path,
+    workdir: Path,
+    output_width: int,
+    output_height: int,
+) -> EditorialPreflightResult:
+    """Run the exact timeline, captions, audio, and compositor before visual model loading."""
+    from . import caption_renderer
+    from .production_visual_convergence_v41 import (
+        validate_editorial_contract_diversity_v41,
+    )
+    from .video_qc import _parse_rate, _probe
+
+    preflight_root = workdir / "visual-assets" / "preflight"
+    manifest_path = preflight_root / "production-preflight.json"
+    profile = VideoProfile.from_env()
+    profile_payload = profile.as_dict()
+    contract_sha = _json_sha256(profile_payload)
+    try:
+        total_duration = _audio_duration(audio_path)
+        if not profile.minimum_video_seconds <= total_duration <= profile.maximum_video_seconds:
+            raise ProductionPreflightError(
+                f"Reviewed narration duration {total_duration:.3f}s is outside the frozen "
+                f"production window {profile.minimum_video_seconds:.1f}-"
+                f"{profile.maximum_video_seconds:.1f}s"
+            )
+        expanded, shots = build_editorial_plan(
+            plan=plan,
+            package=package,
+            segments=segments,
+            total_duration=total_duration,
+            profile=profile,
+        )
+        environment_families = validate_editorial_contract_diversity_v41(
+            expanded.scenes
+        )
+
+        production_captions = preflight_root / "production-captions.ass"
+        caption_renderer.write_animated_caption_track(
+            sorted(segments, key=lambda item: item.segment_id),
+            production_captions,
+            width=output_width,
+            height=output_height,
+        )
+        caption_payload = json.loads(
+            production_captions.with_suffix(".json").read_text(encoding="utf-8")
+        )
+        if caption_payload.get("all_cues_fit") is not True:
+            raise ProductionPreflightError("Exact production captions do not fit")
+        if caption_payload.get("all_rendered_cues_fit") is not True:
+            raise ProductionPreflightError(
+                "Exact captions failed the rendered libass bounds proof"
+            )
+
+        # Keep the animatic spatially cheap, but use production temporal resolution. The
+        # 80 ms crossfade is shorter than one frame below 13 FPS and FFmpeg then truncates
+        # a chained timeline after the second shot instead of exercising every transition.
+        animatic_width, animatic_height, animatic_fps = 720, 1280, 30
+        placeholders = _placeholder_media(
+            plan=expanded,
+            shots=shots,
+            output_dir=preflight_root / "placeholder-media",
+            width=animatic_width,
+            height=animatic_height,
+            fps=animatic_fps,
+        )
+        animatic_dir = preflight_root / "animatic"
+        animatic, _thumbnail, _captions = _compose_editorial_video(
+            media=placeholders,
+            shots=shots,
+            segments=segments,
+            package=package,
+            audio_path=audio_path,
+            workdir=animatic_dir,
+            width=animatic_width,
+            height=animatic_height,
+            fps=animatic_fps,
+        )
+        probe = _probe(animatic)
+        streams = probe.get("streams") or []
+        video_stream = next(
+            (item for item in streams if item.get("codec_type") == "video"),
+            {},
+        )
+        audio_stream = next(
+            (item for item in streams if item.get("codec_type") == "audio"),
+            {},
+        )
+        animatic_duration = float((probe.get("format") or {}).get("duration") or 0.0)
+        if abs(animatic_duration - total_duration) > 0.25:
+            raise ProductionPreflightError(
+                f"Animatic duration {animatic_duration:.3f}s does not match narration "
+                f"{total_duration:.3f}s"
+            )
+        if (
+            int(video_stream.get("width") or 0) != animatic_width
+            or int(video_stream.get("height") or 0) != animatic_height
+            or _parse_rate(str(video_stream.get("avg_frame_rate") or "0/0"))
+            < animatic_fps - 0.1
+        ):
+            raise ProductionPreflightError("Animatic video stream is invalid")
+        if not audio_stream:
+            raise ProductionPreflightError("Animatic is missing reviewed narration audio")
+
+        composition_path = animatic_dir / "visual-composition-manifest.json"
+        composition = json.loads(composition_path.read_text(encoding="utf-8"))
+        if _json_sha256(composition.get("editorial_contract") or {}) != contract_sha:
+            raise ProductionPreflightError(
+                "Animatic compositor did not use the frozen quality contract"
+            )
+        compositor_log = (animatic_dir / "visual-compositor.log").read_text(
+            encoding="utf-8",
+            errors="replace",
+        )
+        transition_count = compositor_log.count("xfade=transition=fade")
+        if transition_count != len(shots) - 1:
+            raise ProductionPreflightError(
+                f"Animatic realized {transition_count} transitions for {len(shots)} shots"
+            )
+
+        payload = {
+            "status": "passed",
+            "phase": "exact_before_visual_inference",
+            "quality_contract": profile_payload,
+            "quality_contract_sha256": contract_sha,
+            "package_sha256": _json_sha256(asdict(package)),
+            "source_visual_plan_sha256": _json_sha256(plan.as_dict()),
+            "expanded_visual_plan_sha256": _json_sha256(expanded.as_dict()),
+            "narration_sha256": _file_sha256(audio_path),
+            "narration_duration_seconds": round(total_duration, 6),
+            "shot_count": len(shots),
+            "wan_shots": sum(shot.renderer == "wan_i2v" for shot in shots),
+            "environment_families": environment_families,
+            "production_caption_manifest": str(
+                production_captions.with_suffix(".json")
+            ),
+            "animatic_path": str(animatic),
+            "animatic_sha256": _file_sha256(animatic),
+            "animatic_duration_seconds": round(animatic_duration, 6),
+            "animatic_resolution": [animatic_width, animatic_height],
+            "animatic_fps": animatic_fps,
+            "transition_count": transition_count,
+            "checks": {
+                "exact_editorial_timeline": True,
+                "exact_audio_duration": True,
+                "frozen_quality_contract": True,
+                "environment_diversity": True,
+                "rendered_production_caption_bounds": True,
+                "real_compositor_animatic": True,
+                "narration_caption_transition_sync": True,
+            },
+        }
+        _write_json(manifest_path, payload)
+        return EditorialPreflightResult(
+            plan=expanded,
+            shots=shots,
+            environment_families=environment_families,
+            quality_contract_sha256=contract_sha,
+            manifest_path=manifest_path,
+            animatic_path=animatic,
+        )
+    except Exception as exc:
+        _write_json(
+            manifest_path,
+            {
+                "status": "failed",
+                "phase": "exact_before_visual_inference",
+                "quality_contract": profile_payload,
+                "quality_contract_sha256": contract_sha,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        raise ProductionPreflightError(
+            f"Exact production preflight failed before visual inference: {exc}"
+        ) from exc
 
 
 def _audio_duration(path: Path) -> float:
@@ -374,24 +831,19 @@ def render_visual_plan_v28(
     from . import video_generator, visual_pipeline
 
     profile = VideoProfile.from_env()
-    total_duration = _audio_duration(audio_path)
-    if not profile.minimum_video_seconds <= total_duration <= profile.maximum_video_seconds:
-        raise ValueError(
-            f"Reviewed narration duration {total_duration:.3f}s is outside the production "
-            f"window {profile.minimum_video_seconds:.1f}-{profile.maximum_video_seconds:.1f}s"
-        )
-    expanded, shots = build_editorial_plan(
+    preflight = validate_exact_editorial_preflight(
         plan=plan,
         package=package,
         segments=segments,
-        total_duration=total_duration,
-        profile=profile,
+        audio_path=audio_path,
+        workdir=workdir,
+        output_width=output_width,
+        output_height=output_height,
     )
-    from .production_visual_convergence_v41 import (
-        validate_editorial_contract_diversity_v41,
-    )
-
-    environment_families = validate_editorial_contract_diversity_v41(expanded.scenes)
+    total_duration = _audio_duration(audio_path)
+    expanded = preflight.plan
+    shots = preflight.shots
+    environment_families = preflight.environment_families
     visual_root = workdir / "visual-assets"
     keyframe_dir = visual_root / "keyframes"
     scene_media_dir = visual_root / "scene-media"
@@ -447,6 +899,12 @@ def render_visual_plan_v28(
                 "source_asset_looping": False,
                 "destructive_caption_matte": False,
                 "environment_families": environment_families,
+                "preflight": {
+                    "status": "passed",
+                    "manifest": str(preflight.manifest_path),
+                    "animatic": str(preflight.animatic_path),
+                    "quality_contract_sha256": preflight.quality_contract_sha256,
+                },
                 "shots": [item.as_dict() for item in shots],
             },
             indent=2,
@@ -543,10 +1001,6 @@ def _install_video_qc() -> None:
         timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
         shots = timeline.get("shots") or []
         shot_durations = [float(item["duration_seconds"]) for item in shots]
-        if not profile.minimum_video_seconds <= report.duration_seconds <= profile.maximum_video_seconds:
-            failures.append(
-                f"video duration {report.duration_seconds:.3f}s is outside the production window"
-            )
         kwargs["scene_durations"] = shot_durations
         media_manifest = (
             video_path.parent.parent / "scene-media" / "scene-media-manifest.json"
@@ -563,6 +1017,10 @@ def _install_video_qc() -> None:
         report_path = kwargs.get("report_path")
         report = current_verify(*args, **kwargs)
         failures = list(report.failures)
+        if not profile.minimum_video_seconds <= report.duration_seconds <= profile.maximum_video_seconds:
+            failures.append(
+                f"video duration {report.duration_seconds:.3f}s is outside the production window"
+            )
 
         if len(shots) < profile.minimum_shots:
             failures.append(f"editorial shot count {len(shots)} is below {profile.minimum_shots}")

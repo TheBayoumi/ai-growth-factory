@@ -14,6 +14,37 @@ class VisualPipelineContractTests(unittest.TestCase):
             self.assertIn("render_visual_plan", source)
             self.assertNotIn("render_video(", source)
 
+    def test_paid_visual_inference_is_blocked_by_static_and_animatic_preflight(self):
+        canary = (ROOT / "factory" / "canary.py").read_text(encoding="utf-8")
+        pipeline = (ROOT / "factory" / "pipeline.py").read_text(encoding="utf-8")
+        editorial = (ROOT / "factory" / "production_editorial_v28.py").read_text(
+            encoding="utf-8"
+        )
+        for source in (canary, pipeline):
+            self.assertLess(
+                source.index("validate_static_editorial_preflight"),
+                source.index("build_reviewed_narration"),
+            )
+        self.assertLess(
+            editorial.index("validate_exact_editorial_preflight("),
+            editorial.index("visual_pipeline.generate_keyframes", editorial.index("def render_visual_plan_v28")),
+        )
+        self.assertIn("deterministic-preflight-placeholder", editorial)
+        self.assertIn("exact_before_visual_inference", editorial)
+        self.assertIn(
+            "animatic_width, animatic_height, animatic_fps = 720, 1280, 30",
+            editorial,
+        )
+
+    def test_final_duration_gate_reads_the_completed_qc_report(self):
+        editorial = (ROOT / "factory" / "production_editorial_v28.py").read_text(
+            encoding="utf-8"
+        )
+        verifier = editorial.index("def verify_v28")
+        report = editorial.index("report = current_verify", verifier)
+        duration = editorial.index("report.duration_seconds", report)
+        self.assertLess(report, duration)
+
     def test_generated_media_and_captions_are_separate_layers(self):
         compositor = (ROOT / "factory" / "visual_compositor.py").read_text(encoding="utf-8")
         captioner = (ROOT / "factory" / "caption_renderer.py").read_text(encoding="utf-8")
