@@ -43,7 +43,7 @@ worker_image = (
         "libatk-bridge2.0-0",
         "libcups2",
         "libgbm1",
-        "libasound2",
+        "libasound2t64",
         "libxrandr2",
         "libxkbcommon0",
         "libxfixes3",
