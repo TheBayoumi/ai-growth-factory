@@ -4,7 +4,7 @@ import hashlib
 import html
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
@@ -63,6 +63,22 @@ FEEDS: tuple[tuple[str, str], ...] = (
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_TRUSTED_ARTICLE_HOSTS = (
+    "openai.com",
+    "blog.google",
+    "anthropic.com",
+    "microsoft.com",
+    "blogs.nvidia.com",
+    "huggingface.co",
+)
+_ARTICLE_BLOCK_RE = re.compile(
+    r"<(?:article|main)\b[^>]*>(.*?)</(?:article|main)>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_NON_CONTENT_RE = re.compile(
+    r"<(script|style|svg|nav|header|footer|form|aside)\b[^>]*>.*?</\1>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 def _humanize_namespace(value: str) -> str:
@@ -90,6 +106,55 @@ def source_authority(source: SourceItem) -> str:
 
 def _clean(value: str | None) -> str:
     return html.unescape(_TAG_RE.sub(" ", value or "")).replace("\n", " ").strip()
+
+
+def _trusted_article_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    return parsed.scheme == "https" and any(
+        hostname == allowed or hostname.endswith("." + allowed)
+        for allowed in _TRUSTED_ARTICLE_HOSTS
+    )
+
+
+def _extract_article_summary(content: bytes) -> str:
+    """Extract visible official-article evidence without adding an HTML dependency."""
+    document = content[:2_000_000].decode("utf-8", errors="replace")
+    blocks = _ARTICLE_BLOCK_RE.findall(document)
+    selected = " ".join(blocks) if blocks else document
+    selected = _NON_CONTENT_RE.sub(" ", selected)
+    return " ".join(_clean(selected).split())[:2400]
+
+
+def hydrate_source_summaries(
+    items: Iterable[SourceItem],
+    *,
+    max_items: int = 12,
+    timeout_seconds: float = 8.0,
+) -> list[SourceItem]:
+    """Hydrate weak feed summaries from trusted primary pages before the LLM runs.
+
+    Only the highest-ranked sources are fetched. A failed page remains unchanged so the
+    downstream evidence gate can reject it before TTS or GPU generation.
+    """
+    hydrated: list[SourceItem] = []
+    headers = {"User-Agent": "AIGrowthFactory/1.0 (+https://vercel.app)"}
+    for index, item in enumerate(items):
+        if (
+            index >= max_items
+            or len(item.summary.split()) >= 40
+            or not _trusted_article_url(item.url)
+        ):
+            hydrated.append(item)
+            continue
+        try:
+            response = requests.get(item.url, headers=headers, timeout=timeout_seconds)
+            response.raise_for_status()
+            summary = _extract_article_summary(response.content)
+        except Exception:
+            summary = ""
+        hydrated.append(replace(item, summary=summary) if len(summary.split()) >= 40 else item)
+    return hydrated
 
 
 def _local(tag: str) -> str:

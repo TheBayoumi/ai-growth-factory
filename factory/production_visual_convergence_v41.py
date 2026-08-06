@@ -466,7 +466,17 @@ def grounded_contract_for_v41(
     )
     frame_index = resolved_index % len(frames)
     composition_index = (resolved_index // len(frames)) % len(grounded_v40._SHOT_COMPOSITIONS)
+    camera_angles = (
+        "eye-level three-quarter view",
+        "restrained high-angle process view",
+        "low shoulder-height documentary view",
+    )
+    camera_index = (
+        resolved_index
+        // (len(frames) * len(grounded_v40._SHOT_COMPOSITIONS))
+    ) % len(camera_angles)
     composition_anchor = grounded_v40._SHOT_COMPOSITIONS[composition_index]
+    camera_angle = camera_angles[camera_index]
     topic_anchor = _TOPIC_ANCHORS[category]
     forbidden = (
         *grounded_v40._CATEGORY_NEGATIVES.get(category, ()),
@@ -478,7 +488,7 @@ def grounded_contract_for_v41(
             *forbidden,
         )
     return grounded_v40.GroundedSceneContractV40(
-        identity=f"{category}-{frame_index}-c{composition_index}-v41",
+        identity=f"{category}-{frame_index}-c{composition_index}-a{camera_index}-v41",
         category=category,
         variant=frame.variant,
         composition_anchor=composition_anchor,
@@ -486,7 +496,7 @@ def grounded_contract_for_v41(
         environment=frame.environment,
         subject=frame.subject,
         action=frame.action,
-        camera=clean(f"{composition_anchor}; {frame.camera}"),
+        camera=clean(f"{composition_anchor}; {camera_angle}; {frame.camera}"),
         palette=frame.palette,
         required_phrases=(topic_anchor, frame.environment, frame.subject, frame.action),
         forbidden_substitutions=tuple(dict.fromkeys(forbidden)),

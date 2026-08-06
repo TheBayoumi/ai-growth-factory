@@ -15,14 +15,26 @@ class ProductionRelationshipGroundingTests(unittest.TestCase):
                 "OpenAI",
                 "Realtime API Adds Reliable Tool Calling",
                 "https://example.com/openai",
-                "The Realtime API now supports more reliable tool calls.",
+                (
+                    "The Realtime API now supports more reliable tool calls with structured "
+                    "arguments, explicit confirmation, retry handling, permission checks, and "
+                    "observable results inside live voice conversations. Developers can evaluate "
+                    "latency, malformed requests, delayed responses, correction rates, and failure "
+                    "recovery against a concrete production interface."
+                ),
                 now,
             ),
             SourceItem(
                 "Microsoft Research",
                 "EvoLib Evaluates Automated Library Improvement",
                 "https://example.com/microsoft",
-                "EvoLib studies automated improvement of software libraries.",
+                (
+                    "EvoLib studies automated improvement of software libraries through controlled "
+                    "tasks, repeatable evaluations, measured checkpoints, and explicit regression "
+                    "tracking. The research separates proposed edits from verified outcomes and "
+                    "records failures, retries, and reproducibility evidence before claiming that "
+                    "an automated change improves a real workflow."
+                ),
                 now,
             ),
         ]

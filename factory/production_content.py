@@ -39,6 +39,10 @@ _BANNED_PHRASES = (
     "leading advancements",
     "more effective, ethical, and accessible",
     "scientific research and workforce readiness",
+    "marks a significant step in making",
+    "provides developers with a powerful tool",
+    "making it easier to integrate ai into existing workflows",
+    "a practical solution for developers and businesses",
 )
 _MALFORMED_COPY_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\brechanging\b", "corrupted word 'rechanging'"),
@@ -80,6 +84,8 @@ PRODUCTION EDITORIAL RULES:
 - Never describe selected publishers as collaborating, partnering, jointly developing, or confirming one another unless a supplied source explicitly states that relationship.
 - Every scene must add a distinct fact or implication. Do not repeat the same conclusion in different wording.
 - Use at least four concrete facts from the supplied title and summary. When the evidence contains measurements, preserve at least two of them exactly; do not replace context size, memory, CPU/GPU speed, or other measured capabilities with generic trend language.
+- Never select an entry whose summary is empty or too weak to support four concrete facts.
+- End with a source-backed limitation, comparison, or verification step; do not restate the model size, efficiency, accessibility, or workflow benefit.
 - Thumbnail text must name the concrete subject in 2-5 words.
 - Return zero-based source_index values only: with N source_urls, valid values are 0 through N-1.
 """.strip()
@@ -287,6 +293,12 @@ def _validate_evidence_specificity(
 
     if not selected:
         return
+    weak = [source.url for source in selected if len(source.summary.split()) < 40]
+    if weak:
+        raise LocalLLMError(
+            "Selected source evidence is too thin for a factual production script: "
+            + ", ".join(weak)
+        )
     evidence_numbers: set[str] = set()
     for source in selected:
         evidence_numbers.update(

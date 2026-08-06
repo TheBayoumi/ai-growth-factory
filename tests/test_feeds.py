@@ -9,6 +9,7 @@ from factory.feeds import (
     _link,
     _parse,
     fetch_recent,
+    hydrate_source_summaries,
     publishers,
 )
 
@@ -149,6 +150,48 @@ class FeedTests(unittest.TestCase):
             SourceItem("Two", "C", "https://c", "", published),
         ]
         self.assertEqual(publishers(items), {"One", "Two"})
+
+    def test_hydrates_empty_summary_from_trusted_primary_article(self):
+        published = datetime(2026, 8, 4, tzinfo=timezone.utc)
+        source = SourceItem(
+            "Hugging Face",
+            "Deploy local agents everywhere with LFM2.5-2.6B",
+            "https://huggingface.co/blog/LiquidAI/lfm2-5-2-6b",
+            "",
+            published,
+        )
+        article = (
+            "<html><script>ignore me</script><main><h1>LFM2.5-2.6B</h1><p>"
+            "Liquid AI built an on-device agent model with native tool calling and a 128K "
+            "context window. It reaches 220 tokens per second on an Apple M5 Max and 113 "
+            "tokens per second on an AMD Ryzen CPU while using under 2.5 GB of memory. "
+            "The model was trained on 34 trillion tokens and supports phones, laptops, "
+            "llama.cpp, MLX, vLLM, SGLang, and ONNX for local private deployment."
+            "</p></main></html>"
+        ).encode()
+        response = Mock(content=article)
+        response.raise_for_status.return_value = None
+
+        with patch("factory.feeds.requests.get", return_value=response) as get:
+            hydrated = hydrate_source_summaries([source], timeout_seconds=4.0)
+
+        self.assertIn("220 tokens per second", hydrated[0].summary)
+        self.assertIn("128K context window", hydrated[0].summary)
+        self.assertNotIn("ignore me", hydrated[0].summary)
+        self.assertEqual(get.call_args.kwargs["timeout"], 4.0)
+
+    def test_untrusted_article_host_is_never_hydrated(self):
+        source = SourceItem(
+            "Unknown",
+            "Untrusted",
+            "https://untrusted.example/article",
+            "",
+            datetime(2026, 8, 4, tzinfo=timezone.utc),
+        )
+        with patch("factory.feeds.requests.get") as get:
+            hydrated = hydrate_source_summaries([source])
+        self.assertEqual(hydrated, [source])
+        get.assert_not_called()
 
 
 if __name__ == "__main__":

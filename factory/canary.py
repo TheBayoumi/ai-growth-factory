@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import SourceItem, fetch_diverse_recent, fetch_recent, source_authority
+from .feeds import (
+    SourceItem,
+    fetch_diverse_recent,
+    fetch_recent,
+    hydrate_source_summaries,
+    source_authority,
+)
 from .llm_runtime import managed_llama_server
 from .policy import Strategy
 from .source_attributed_llm import generate_package
@@ -253,7 +259,9 @@ def run_production_canary(settings: Settings, output_root: Path) -> dict[str, An
             max_age_hours=min(settings.max_source_age_hours, 72),
         )
         trend_alignment = align_primary_sources_to_trends(selection.items, trend_snapshot)
-        sources = list(trend_alignment.ranked_sources or selection.items)
+        sources = hydrate_source_summaries(
+            trend_alignment.ranked_sources or selection.items,
+        )
         trend_payload = trend_snapshot.as_dict()
         trend_payload["alignment"] = trend_alignment.as_dict()
         (destination / "trend-snapshot.json").write_text(

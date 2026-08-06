@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import fetch_diverse_recent, fetch_recent
+from .feeds import fetch_diverse_recent, fetch_recent, hydrate_source_summaries
 from .llm_runtime import managed_llama_server
 from .policy import reward, select_strategy
 from .source_attributed_llm import generate_package
@@ -128,7 +128,9 @@ def run_factory(settings: Settings) -> dict[str, Any]:
         max_age_hours=min(settings.max_source_age_hours, 72),
     )
     trend_alignment = align_primary_sources_to_trends(selection.items, trend_snapshot)
-    sources = list(trend_alignment.ranked_sources or selection.items)
+    sources = hydrate_source_summaries(
+        trend_alignment.ranked_sources or selection.items,
+    )
     trend_audit = _persist_trend_audit(settings, trend_snapshot, trend_alignment)
 
     seed_material = f"{today}|{context.channel_id}|{len(mature)}"

@@ -28,6 +28,19 @@ def _director(claim: str, direction: str, index: int) -> str:
 
 
 class ProductionVisualConvergenceV41Tests(unittest.TestCase):
+    def test_maximum_editorial_plan_has_unique_executable_contracts(self) -> None:
+        identities = [
+            grounded_contract_for_v41(
+                _director(
+                    "A source-grounded AI capability changes a concrete local workflow",
+                    "A literal documentary view of the measured workflow",
+                    index,
+                )
+            ).identity
+            for index in range(30)
+        ]
+        self.assertEqual(len(identities), len(set(identities)))
+
     def test_enterprise_scene_uses_literal_indoor_network_action(self) -> None:
         director = _director(
             "Built on LiquidAI's technology, the model supports a wide range of applications, from custom solutions to enterprise use cases",
