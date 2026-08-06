@@ -9,6 +9,7 @@ on:
       - feat/vimax-remotion-pipeline
     paths:
       - ".github/workflows/vimax-remotion-canary.yml"
+      - "cloud/modal_app.py"
 
 permissions:
   contents: read
