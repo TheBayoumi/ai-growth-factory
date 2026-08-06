@@ -1,0 +1,37 @@
+name: Run ViMax Remotion GPU Canary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modal-vimax-remotion-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - run: python scripts/repository_preflight.py
+      - name: Invoke ViMax + Remotion canary
+        run: |
+          set -o pipefail
+          modal run cloud/modal_app.py --vimax-remotion-canary | tee vimax-remotion-canary-result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vimax-remotion-canary-result
+          path: vimax-remotion-canary-result.txt
+          retention-days: 14

@@ -12,4 +12,4 @@ _visual_storyboard_v30.classify_claim = _classify_claim_v30
 install_production_visual_clip_budget_v31()
 install_production_wan_budget_v32()
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"

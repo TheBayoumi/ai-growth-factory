@@ -10,6 +10,10 @@ APP_NAME = "ai-growth-factory"
 MODEL_CACHE = "/cache/huggingface"
 STATE_DIR = "/state"
 WORK_DIR = "/tmp/ai-growth-factory"
+VIMAX_COMMIT = "05a48943878312d88fe5a016c12a9654940ecc43"
+VIMAX_ROOT = "/opt/vimax"
+RENDERER_DIR = "/opt/ai-growth-factory/renderer"
+SCRIPTS_DIR = "/opt/ai-growth-factory/scripts"
 
 app = modal.App(APP_NAME)
 hf_cache = modal.Volume.from_name("ai-growth-factory-model-cache", create_if_missing=True)
@@ -31,8 +35,25 @@ worker_image = (
         "libglib2.0-0",
         "fontconfig",
         "fonts-dejavu-core",
+        "curl",
+        "ca-certificates",
+        "libnss3",
+        "libdbus-1-3",
+        "libatk1.0-0",
+        "libatk-bridge2.0-0",
+        "libcups2",
+        "libgbm1",
+        "libasound2",
+        "libxrandr2",
+        "libxkbcommon0",
+        "libxfixes3",
+        "libxcomposite1",
+        "libxdamage1",
     )
     .run_commands(
+        "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
+        "apt-get install -y nodejs",
+        "node --version && npm --version",
         "python -m pip install --upgrade pip wheel setuptools",
         (
             "python -m pip install torch==2.8.0 torchaudio==2.8.0 "
@@ -76,6 +97,24 @@ worker_image = (
             "print('Voice, bitsandbytes 4-bit Omni reviewer, image, and Wan2.2 runtime preflight passed')\""
         ),
         "fc-cache -f -v >/dev/null",
+        (
+            f"git clone https://github.com/HKUDS/ViMax.git {VIMAX_ROOT} && "
+            f"git -C {VIMAX_ROOT} checkout {VIMAX_COMMIT} && "
+            f"test \"$(git -C {VIMAX_ROOT} rev-parse HEAD)\" = {VIMAX_COMMIT}"
+        ),
+        f"python -m venv {VIMAX_ROOT}/.venv",
+        f"{VIMAX_ROOT}/.venv/bin/python -m pip install --upgrade pip wheel setuptools",
+        f"{VIMAX_ROOT}/.venv/bin/python -m pip install -e {VIMAX_ROOT}",
+    )
+    .add_local_dir("renderer", RENDERER_DIR, copy=True)
+    .add_local_dir("scripts", SCRIPTS_DIR, copy=True)
+    .run_commands(
+        f"cd {RENDERER_DIR} && npm install --ignore-scripts --no-audit --no-fund",
+        f"cd {RENDERER_DIR} && npm run build",
+        (
+            f"cd {RENDERER_DIR} && node --input-type=module -e "
+            "\"import {ensureBrowser} from '@remotion/renderer'; await ensureBrowser();\""
+        ),
     )
     .env(
         {
@@ -122,6 +161,13 @@ worker_image = (
             "PUBLISH_ENABLED": "false",
             "YOUTUBE_PRIVACY_STATUS": "private",
             "TIMEZONE_NAME": "Africa/Cairo",
+            "VIMAX_PLANNER_ENABLED": "false",
+            "VIMAX_ROOT": VIMAX_ROOT,
+            "VIMAX_PYTHON": f"{VIMAX_ROOT}/.venv/bin/python",
+            "VIMAX_PLANNER_SCRIPT": f"{SCRIPTS_DIR}/run_vimax_planner.py",
+            "VIDEO_RENDER_BACKEND": "ffmpeg",
+            "REMOTION_RENDERER_DIR": RENDERER_DIR,
+            "REMOTION_CONCURRENCY": "50%",
         }
     )
     .add_local_python_source("factory")
@@ -141,6 +187,18 @@ def _prepare_runtime() -> None:
     from factory.production_runtime import install_production_runtime
 
     install_production_runtime()
+
+
+def _run_render_canary() -> dict[str, object]:
+    from factory.canary import run_production_canary
+    from factory.config import Settings
+
+    result = run_production_canary(Settings.from_env(), Path(STATE_DIR) / "canaries")
+    state_volume.commit()
+    hf_cache.commit()
+    if result.get("status") != "verified_render_canary":
+        raise RuntimeError(json.dumps(result, ensure_ascii=False))
+    return result
 
 
 @app.function(
@@ -180,15 +238,33 @@ def daily_factory() -> dict[str, object]:
 def render_production_canary() -> dict[str, object]:
     _prepare_runtime()
     os.environ["PUBLISH_ENABLED"] = "false"
-    from factory.canary import run_production_canary
-    from factory.config import Settings
+    return _run_render_canary()
 
-    result = run_production_canary(Settings.from_env(), Path(STATE_DIR) / "canaries")
-    state_volume.commit()
-    hf_cache.commit()
-    if result.get("status") != "verified_render_canary":
-        raise RuntimeError(json.dumps(result, ensure_ascii=False))
-    return result
+
+@app.function(
+    image=worker_image,
+    gpu="A10",
+    cpu=8.0,
+    memory=65536,
+    timeout=85 * 60,
+    max_containers=1,
+    retries=modal.Retries(max_retries=0),
+    secrets=factory_secrets,
+    volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
+)
+def render_vimax_remotion_canary() -> dict[str, object]:
+    """Run the complete new planning/render path without changing scheduled production."""
+    os.environ["PUBLISH_ENABLED"] = "false"
+    os.environ["VIMAX_PLANNER_ENABLED"] = "true"
+    os.environ["VIDEO_RENDER_BACKEND"] = "remotion"
+    _prepare_runtime()
+    result = _run_render_canary()
+    return {
+        **result,
+        "planning_backend": "vimax_script2video",
+        "render_backend": "remotion",
+        "vimax_commit": VIMAX_COMMIT,
+    }
 
 
 @app.function(
@@ -214,10 +290,17 @@ def run_canary() -> dict[str, object]:
 
 
 @app.local_entrypoint()
-def main(canary: bool = False, render_canary: bool = False) -> None:
-    if canary and render_canary:
-        raise ValueError("Choose only one of --canary or --render-canary")
-    if render_canary:
+def main(
+    canary: bool = False,
+    render_canary: bool = False,
+    vimax_remotion_canary: bool = False,
+) -> None:
+    selected = sum((canary, render_canary, vimax_remotion_canary))
+    if selected > 1:
+        raise ValueError("Choose only one canary mode")
+    if vimax_remotion_canary:
+        result = render_vimax_remotion_canary.remote()
+    elif render_canary:
         result = render_production_canary.remote()
     elif canary:
         result = run_canary.remote()

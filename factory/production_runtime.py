@@ -140,4 +140,14 @@ def install_production_runtime() -> None:
     from .production_editorial_compositor_v28 import compose_editorial_video_v28
 
     production_editorial_v28._compose_editorial_video = compose_editorial_video_v28
+
+    # ViMax replaces planning only when explicitly enabled. Remotion is installed last so no
+    # compatibility adapter can overwrite the selected final compositor.
+    from .production_vimax_planning_v45 import install_production_vimax_planning_v45
+    from .production_remotion_renderer_v45 import install_production_remotion_renderer_v45
+    from .production_visual_audit_v45 import install_production_visual_audit_v45
+
+    install_production_vimax_planning_v45()
+    install_production_remotion_renderer_v45()
+    install_production_visual_audit_v45()
     _INSTALLED = True
