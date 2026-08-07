@@ -33,16 +33,22 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p canary-debug
-          modal volume get --force ai-growth-factory-state \
-            canaries/20260807T025633Z-ea65e3fd/voice-review-manifest.json \
-            canary-debug/voice-review-manifest.json
-          modal volume get --force ai-growth-factory-state \
-            canaries/20260807T025633Z-ea65e3fd/voice.wav \
-            canary-debug/voice.wav || true
+          CANARY=20260807T095758Z-5f3ee714
+          for name in \
+            canary-failure.json \
+            voice-review-manifest.json \
+            narration-final-attempt.wav \
+            voice-review-final.wav \
+            package.json \
+            production-preflight.json; do
+            modal volume get --force ai-growth-factory-state \
+              "canaries/${CANARY}/${name}" \
+              "canary-debug/${name}" || true
+          done
           find canary-debug -maxdepth 2 -type f -printf '%P\n' | sort
       - uses: actions/upload-artifact@v4
         with:
-          name: vimax-canary-20260807T025633Z-ea65e3fd-debug
+          name: vimax-canary-20260807T095758Z-5f3ee714-debug
           path: canary-debug
           retention-days: 14
           if-no-files-found: error
