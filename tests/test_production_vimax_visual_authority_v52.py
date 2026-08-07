@@ -4,6 +4,8 @@ import unittest
 from types import SimpleNamespace
 
 from factory.production_vimax_visual_authority_v52 import (
+    _physicalized_direction,
+    _physicalized_motion,
     _semantic_direction,
     compile_vimax_image_prompt_v52,
     validate_vimax_storyboard_v52,
@@ -58,6 +60,20 @@ class ViMaxVisualAuthorityV52Tests(unittest.TestCase):
         )
         self.assertTrue(textual)
         self.assertEqual("Provider routing with API keys and SDK integration", direction)
+
+    def test_text_card_physicalization_is_filmable_and_motionful(self) -> None:
+        direction = _physicalized_direction(
+            "Baseten can be selected as an inference provider for supported Hugging Face models.",
+            7,
+        )
+        motion = _physicalized_motion(7)
+        lowered = direction.casefold()
+        self.assertIn("developer", lowered)
+        self.assertIn("inference", lowered)
+        self.assertIn("baseten", lowered)
+        self.assertNotIn("digital interface", lowered)
+        self.assertNotIn("shot of the text", lowered)
+        self.assertNotRegex(motion.casefold(), r"static camera|no movement|unchanged")
 
 
 if __name__ == "__main__":

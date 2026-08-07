@@ -64,7 +64,7 @@ class ProductionPackageCapacityV46Tests(unittest.TestCase):
         )
         middle = [
             "Engineering teams compare repeated workflow results before changing production systems today."
-            for _ in range(12)
+            for _ in range(16)
         ]
         closing = (
             "Before adopting it, verify the linked evidence and compare failures "

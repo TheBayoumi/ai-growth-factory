@@ -49,6 +49,24 @@ _FALLBACK_SETUPS = (
     "an integration workspace with one developer, an unbranded workstation, and abstract unreadable model-selection cards",
 )
 
+_PHYSICAL_ACTIONS = (
+    "a developer connects a secure hardware key and starts an inference request while status lights change across the compute nodes",
+    "an engineer routes one application device through a compact inference appliance while a second engineer checks the physical connection path",
+    "a developer switches a model-serving cable path between two compact compute nodes and watches the application device respond",
+    "two engineers compare output behavior from one application device while the serving node activity lights change",
+    "a developer connects an application device to a short inference rack while another engineer verifies the active compute node",
+    "an engineer moves from the workstation to the serving appliance and reconnects the request path to a second compute node",
+)
+
+_MOTION_CYCLE = (
+    "Slow dolly in as the developer connects the request path and the compute-node activity lights change.",
+    "Controlled pan right following the engineer from the application device to the inference appliance.",
+    "Slow dolly out revealing the workstation, application device, and serving nodes as one connected workflow.",
+    "Gentle track left as two engineers compare the application response and the active serving node.",
+    "Slow tilt down from the compute rack to the developer connecting the application device.",
+    "Controlled push in toward the active inference appliance while the developer completes the connection.",
+)
+
 _NEGATIVE_ITEMS = (
     "readable text lettering numbers",
     "logo watermark trademark",
@@ -173,6 +191,21 @@ def _semantic_direction(value: str) -> tuple[str, bool]:
 
 def _negative_prompt() -> str:
     return _fit(_NEGATIVE_ITEMS, limit=_MAX_NEGATIVE_WORDS).rstrip(".")
+
+
+def _physicalized_direction(claim: str, index: int) -> str:
+    """Translate an unrenderable ViMax text/UI card into a filmable version of the same claim."""
+    claim = _clean(claim)
+    return _clean(
+        f"{_FALLBACK_SETUPS[index % len(_FALLBACK_SETUPS)]}; "
+        f"{_PHYSICAL_ACTIONS[index % len(_PHYSICAL_ACTIONS)]}; "
+        f"the physical workflow represents this source-grounded claim: {claim}; "
+        "all screens remain abstract and unreadable"
+    )
+
+
+def _physicalized_motion(index: int) -> str:
+    return _MOTION_CYCLE[index % len(_MOTION_CYCLE)]
 
 
 def compile_vimax_image_prompt_v52(
@@ -316,20 +349,32 @@ def _enrich_from_vimax_artifact(plan: Any, package: Any) -> Any:
             raise ViMaxVisualAuthorityError(f"ViMax shot {index} is not an object")
         visual = _clean(raw.get("visual_desc"))
         first = _clean(raw.get("ff_desc"))
+        motion = _clean(raw.get("motion_desc") or scene.motion_prompt)
         if not visual or not first:
             raise ViMaxVisualAuthorityError(f"ViMax shot {index} lost visual/first-frame semantics")
         package_index = min(len(package_scenes) - 1, index * len(package_scenes) // len(plan.scenes))
         claim = _clean(package_scenes[package_index].body)
         if not claim:
             claim = _clean(package_scenes[package_index].heading)
+
+        source_textual = bool(_TEXT_UI_RE.search(f"{visual}. {first}"))
+        direction = _physicalized_direction(claim, index) if source_textual else visual
+        final_motion = _physicalized_motion(index) if source_textual else motion
+
         prompt = (
             f"[VIMAX_SHOT_INDEX={index}] "
             f"Factual technology documentary shot synchronized to this exact spoken sentence: {claim}. "
-            f"Supporting source-grounded visual direction: {visual}. "
+            f"Supporting source-grounded visual direction: {direction}. "
             f"Shot treatment: {_camera_hint(first)}. "
-            f"ViMax first frame: {first}."
+            f"ViMax first frame: {first if not source_textual else direction}."
         )
-        enriched.append(replace(scene, image_prompt=prompt))
+        enriched.append(
+            replace(
+                scene,
+                image_prompt=prompt,
+                motion_prompt=final_motion,
+            )
+        )
     return replace(plan, scenes=tuple(enriched))
 
 
