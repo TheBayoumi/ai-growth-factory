@@ -8,6 +8,7 @@ from factory.models import Scene, VideoPackage
 from factory.production_package_capacity_v46 import (
     _augment_repair_prompt,
     stabilize_package_capacity,
+    stabilize_raw_package_capacity,
     stabilize_raw_scene_capacity,
 )
 
@@ -51,6 +52,27 @@ class ProductionPackageCapacityV46Tests(unittest.TestCase):
             source_publishers=["OpenAI"],
         )
 
+    @staticmethod
+    def _oversized_narration() -> tuple[str, str, str]:
+        opening = (
+            "OpenAI says GPT-5.6 reduced failed tool calls by 42 percent "
+            "during controlled coding evaluations."
+        )
+        measurement = (
+            "The reported 128000-token context window lets engineers retain "
+            "more repository evidence during long tasks."
+        )
+        middle = [
+            "Engineering teams compare repeated workflow results before changing production systems today."
+            for _ in range(12)
+        ]
+        closing = (
+            "Before adopting it, verify the linked evidence and compare failures "
+            "against your current workflow."
+        )
+        narration = " ".join([opening, measurement, *middle, closing])
+        return narration, opening, closing
+
     def test_scene_body_compaction_preserves_metadata(self) -> None:
         raw = {
             "scenes": [
@@ -73,26 +95,38 @@ class ProductionPackageCapacityV46Tests(unittest.TestCase):
         self.assertTrue(corrected["scenes"][0]["body"].endswith("."))
         self.assertEqual(len(raw["scenes"][0]["body"].split()), 20)
 
+    def test_raw_oversized_narration_converges_before_package_validation(self) -> None:
+        narration, opening, closing = self._oversized_narration()
+        self.assertGreater(len(narration.split()), 190)
+        raw = {
+            "narration": narration,
+            "source_urls": ["https://example.com/gpt-5-6"],
+            "scenes": [
+                {
+                    "heading": "Measured result",
+                    "body": (
+                        "OpenAI reports lower tool failure rates in controlled coding workflows, "
+                        "while engineers verify the result against repeated production tasks today."
+                    ),
+                    "visual": "An engineer checks a test log.",
+                    "source_index": 0,
+                }
+            ],
+        }
+
+        corrected = stabilize_raw_package_capacity(raw, [self._source()])
+
+        count = len(corrected["narration"].split())
+        self.assertGreaterEqual(count, 130)
+        self.assertLessEqual(count, 140)
+        self.assertTrue(corrected["narration"].startswith(opening))
+        self.assertTrue(corrected["narration"].endswith(closing))
+        self.assertIn("42 percent", corrected["narration"])
+        self.assertIn("128000-token", corrected["narration"])
+        self.assertLessEqual(len(corrected["scenes"][0]["body"].split()), 18)
+
     def test_oversized_narration_keeps_hook_measurements_and_close(self) -> None:
-        sentences = [
-            (
-                "OpenAI says GPT-5.6 reduced failed tool calls by 42 percent "
-                "during controlled coding evaluations."
-            ),
-            (
-                "The reported 128000-token context window lets engineers retain "
-                "more repository evidence during long tasks."
-            ),
-        ]
-        sentences.extend(
-            "Engineering teams compare repeated workflow results before changing production systems today."
-            for _ in range(12)
-        )
-        closing = (
-            "Before adopting it, verify the linked evidence and compare failures "
-            "against your current workflow."
-        )
-        narration = " ".join([*sentences, closing])
+        narration, opening, closing = self._oversized_narration()
         self.assertGreater(len(narration.split()), 140)
 
         corrected = stabilize_package_capacity(
@@ -103,15 +137,17 @@ class ProductionPackageCapacityV46Tests(unittest.TestCase):
         count = len(corrected.narration.split())
         self.assertGreaterEqual(count, 130)
         self.assertLessEqual(count, 140)
-        self.assertTrue(corrected.narration.startswith(sentences[0]))
+        self.assertTrue(corrected.narration.startswith(opening))
         self.assertTrue(corrected.narration.endswith(closing))
         self.assertIn("42 percent", corrected.narration)
         self.assertIn("128000-token", corrected.narration)
 
-    def test_repair_prompt_states_both_frozen_capacity_limits(self) -> None:
+    def test_repair_prompt_matches_v51_generation_target(self) -> None:
         prompt = _augment_repair_prompt("BASE")
 
-        self.assertIn("132-138", prompt)
+        self.assertIn("130-134", prompt)
+        self.assertIn("publication validator still allows 130-140", prompt)
+        self.assertNotIn("132-138", prompt)
         self.assertIn("at most 18 words", prompt)
         self.assertIn("Preserve source URLs", prompt)
 

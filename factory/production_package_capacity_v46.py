@@ -14,7 +14,9 @@ _SCENE_BODY_MAX_WORDS = 18
 _SCENE_BODY_MAX_REPAIRABLE_WORDS = 30
 _NARRATION_MIN_WORDS = 130
 _NARRATION_MAX_WORDS = 140
-_NARRATION_TARGET_WORDS = 136
+_NARRATION_TARGET_WORDS = 132
+_NARRATION_GENERATION_MIN_WORDS = 130
+_NARRATION_GENERATION_MAX_WORDS = 134
 _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9+_.-]*")
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)*(?:%|x|×)?", re.IGNORECASE)
 _CLAUSE_MARKERS = (
@@ -128,6 +130,34 @@ def _selected_source_tokens(
     return {token.casefold() for token in _TOKEN_RE.findall(evidence)}
 
 
+def _selected_source_tokens_from_raw(
+    raw: dict[str, Any],
+    sources: list[SourceItem],
+) -> set[str]:
+    """Recover evidence tokens before a VideoPackage exists.
+
+    `_package_from_raw` rejects gross narration overshoots before the later production
+    grounding hook can run.  Use only URLs selected by the model when they are valid; if
+    selection itself is malformed, fall back to the supplied candidate evidence so the
+    deterministic compressor still minimizes information loss without inventing claims.
+    """
+    raw_urls = raw.get("source_urls")
+    selected_urls = {
+        str(value).strip()
+        for value in raw_urls
+        if str(value).strip()
+    } if isinstance(raw_urls, list) else set()
+    selected = [source for source in sources if source.url in selected_urls]
+    if not selected:
+        selected = list(sources)
+    evidence = " ".join(
+        f"{source.publisher} {source.author} {source.authority} "
+        f"{source.title} {source.summary}"
+        for source in selected
+    )
+    return {token.casefold() for token in _TOKEN_RE.findall(evidence)}
+
+
 def _information_score(sentence: str, source_tokens: set[str]) -> int:
     tokens = {token.casefold() for token in _TOKEN_RE.findall(sentence)}
     source_hits = len(tokens & source_tokens)
@@ -237,6 +267,27 @@ def _bounded_sentence_compression(
     return corrected
 
 
+def stabilize_raw_package_capacity(
+    raw: dict[str, Any],
+    sources: list[SourceItem],
+) -> dict[str, Any]:
+    """Converge safe raw overshoots before `_package_from_raw` can reject them."""
+    corrected = stabilize_raw_scene_capacity(raw)
+    narration = " ".join(str(corrected.get("narration") or "").split())
+    if _word_count(narration) <= _NARRATION_MAX_WORDS:
+        return corrected
+
+    compressed = _bounded_sentence_compression(
+        narration,
+        _selected_source_tokens_from_raw(corrected, sources),
+    )
+    if not _NARRATION_MIN_WORDS <= _word_count(compressed) <= _NARRATION_MAX_WORDS:
+        return corrected
+    result = dict(corrected)
+    result["narration"] = compressed
+    return result
+
+
 def stabilize_package_capacity(
     package: VideoPackage,
     sources: list[SourceItem],
@@ -258,8 +309,9 @@ def stabilize_package_capacity(
 def _augment_repair_prompt(prompt: str) -> str:
     return (
         prompt
-        + "\n\nPRODUCTION CAPACITY REPAIR:\n"
-        + "- Rewrite narration to 132-138 whitespace-separated words; count before returning.\n"
+        + "\n\nFINAL PRODUCTION CAPACITY CONTRACT (takes precedence over earlier narration ranges):\n"
+        + f"- Rewrite narration to {_NARRATION_GENERATION_MIN_WORDS}-{_NARRATION_GENERATION_MAX_WORDS} whitespace-separated words; count before returning.\n"
+        + "- The publication validator still allows 130-140 words; 130-134 is the generation target for spoken-duration headroom.\n"
         + "- Every scene heading must contain at most 5 words.\n"
         + "- Every scene body must contain at most 18 words; count each body before returning.\n"
         + "- Preserve source URLs, source indices, measurements, named subjects, and factual meaning.\n"
@@ -274,8 +326,8 @@ def install_production_package_capacity_v46() -> None:
 
     from . import local_llm, production_content
 
-    local_llm.NARRATION_TARGET_MIN_WORDS = 132
-    local_llm.NARRATION_TARGET_MAX_WORDS = 138
+    local_llm.NARRATION_TARGET_MIN_WORDS = _NARRATION_GENERATION_MIN_WORDS
+    local_llm.NARRATION_TARGET_MAX_WORDS = _NARRATION_GENERATION_MAX_WORDS
 
     original_repair_prompt = local_llm._repair_prompt
     original_package_from_raw = local_llm._package_from_raw
@@ -292,7 +344,7 @@ def install_production_package_capacity_v46() -> None:
         return original_package_from_raw(
             settings,
             sources,
-            stabilize_raw_scene_capacity(raw),
+            stabilize_raw_package_capacity(raw, sources),
         )
 
     def ground(
