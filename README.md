@@ -8,11 +8,12 @@ Version **1.3.1** is a corrective quality release. It invalidates the 1.3.0 medi
 |---|---|---|
 | Autonomous production | Modal Starter | Daily T4 GPU job, secrets, cron and persistent model/state volumes |
 | Interactive development | Lightning AI Free | Manual model testing, debugging and recovery workspace |
-| Lightweight control plane | Vercel Hobby | Status and YouTube OAuth bootstrap only |
 | Temporary scale experiment | Azure trial credit | Optional one-time benchmark after the private canaries work |
 | Benchmark overflow | Kaggle notebooks | Manual experiments only; never the production scheduler |
 
-Modal is the production choice because its free monthly compute credit, scheduled functions, secrets, persistent volumes and concurrency controls are compatible with an unattended worker. Lightning AI is useful for development, but free Studios restart and are not treated as durable production infrastructure. Azure's new-account credit expires after 30 days and its permanent free VMs are CPU-only, so Azure is not a sustainable GPU foundation.
+Modal is the sole production deployment/runtime target for AI Growth Factory. GitHub Actions may validate, orchestrate, and invoke protected Modal jobs, but no part of this repository is to be deployed to Vercel. The repository-level `vercel.json` kill-switch keeps Git deployments disabled, and repository preflight rejects executable Vercel deployment/linkage configuration.
+
+Lightning AI is useful for development, but free Studios restart and are not treated as durable production infrastructure. Azure's new-account credit expires after 30 days and its permanent free VMs are CPU-only, so Azure is not a sustainable GPU foundation.
 
 ## Autonomous architecture
 
