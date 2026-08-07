@@ -55,12 +55,19 @@ def install_production_vimax_planning_v45() -> None:
         return
 
     from . import production_editorial_v28, visual_pipeline, visual_prompt
+    from .production_package_capacity_v46 import (
+        install_production_package_capacity_v46,
+    )
     from .vimax_planner import (
         build_vimax_editorial_plan,
         construct_vimax_visual_plan,
         persist_vimax_plan_artifact,
     )
 
+    # ViMax can expand a six-scene package into a much denser editorial shot plan. Align the
+    # upstream package capacity contract before any content is generated so the migration path
+    # does not waste authoritative candidates on contradictory word-count instructions.
+    install_production_package_capacity_v46()
     _install_business_environment_diversity_v45()
     current_persist_visual_plan = visual_pipeline.persist_visual_plan
 
