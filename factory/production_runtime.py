@@ -26,6 +26,7 @@ def install_production_runtime() -> None:
     from .production_narration_integrity_v28 import install_production_narration_integrity_v28
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
+    from .production_package_capacity_v46 import install_production_package_capacity_v46
     from .production_pacing import install_production_pacing
     from .production_qwen_omni_bitsandbytes_v28 import (
         install_production_qwen_omni_bitsandbytes_v28,
@@ -39,6 +40,9 @@ def install_production_runtime() -> None:
     from .production_source_deduplication import install_production_source_deduplication
     from .production_source_publishers import (
         install_production_source_publisher_canonicalization,
+    )
+    from .production_spoken_duration_capacity_v51 import (
+        install_production_spoken_duration_capacity_v51,
     )
     from .production_story_coherence import install_production_story_coherence
     from .production_video_qc import install_production_video_qc
@@ -98,6 +102,10 @@ def install_production_runtime() -> None:
     install_production_source_publisher_canonicalization()
     install_production_narration_length_repair()
     install_production_content_gate()
+    # v46 was accidentally dropped from runtime during later migration edits. Restore it before
+    # v51 so scene/body limits and repair prompts converge before the spoken-duration gate runs.
+    install_production_package_capacity_v46()
+    install_production_spoken_duration_capacity_v51()
     install_production_narration_integrity_v28()
     install_production_source_deduplication()
     install_production_relationship_grounding()
@@ -116,9 +124,10 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # Voice quality remains fail-closed. v50 repairs generator-sized segment topology only; it
-    # does not change the 138-146 WPM publication window or the 1.15x tempo ceiling. v42/v43 then
-    # apply auditable technical-token pacing and v45 remains the bounded last-resort TTS fallback.
+    # Voice quality remains fail-closed. v51 constrains script capacity before TTS; v50 repairs
+    # generator-sized segment topology only. Neither changes the 138-146 WPM publication window
+    # nor the 1.15x tempo ceiling. v42/v43 then apply auditable spoken-equivalent pacing and v45
+    # remains the bounded last-resort TTS fallback.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()

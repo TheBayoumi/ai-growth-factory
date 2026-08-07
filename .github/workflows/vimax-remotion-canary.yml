@@ -3,7 +3,8 @@ name: Run ViMax Remotion GPU Canary
 on:
   workflow_dispatch:
   # Controlled branch-only migration validation. Every file capable of changing the live ViMax,
-  # voice-recovery, media-contract, reviewer, or Remotion path must trigger the exact end-to-end canary.
+  # voice-recovery, script-capacity, media-contract, reviewer, or Remotion path must trigger the
+  # exact end-to-end canary.
   push:
     branches:
       - verify/modal-gpu-editorial-v28-20260804
@@ -13,6 +14,8 @@ on:
       - "scripts/run_vimax_planner.py"
       - "factory/vimax_planner.py"
       - "factory/remotion_*.py"
+      - "factory/production_package_capacity_v46.py"
+      - "factory/production_spoken_duration_capacity_v51.py"
       - "factory/production_vimax_planning_v45.py"
       - "factory/production_remotion_renderer_v45.py"
       - "factory/production_visual_audit_v45.py"
