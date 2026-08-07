@@ -1,9 +1,9 @@
-import {bundle} from '@remotion/bundler';
 import {ensureBrowser, renderMedia, selectComposition} from '@remotion/renderer';
 import {createRequire} from 'node:module';
 import {readFile, mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {bundleRemotionProject} from './bundle-config.js';
 import {parseRenderSpec} from './schema.js';
 
 const require = createRequire(import.meta.url);
@@ -50,9 +50,8 @@ const main = async (): Promise<void> => {
 
   const distDir = path.dirname(fileURLToPath(import.meta.url));
   const projectRoot = path.resolve(distDir, '..');
-  const serveUrl = await bundle({
-    entryPoint: path.join(projectRoot, 'src', 'index.ts'),
-    rootDir: projectRoot,
+  const serveUrl = await bundleRemotionProject({
+    projectRoot,
     publicDir,
     enableCaching: true,
     onProgress: (progress) => {
