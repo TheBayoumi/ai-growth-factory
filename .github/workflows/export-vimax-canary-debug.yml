@@ -33,12 +33,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p canary-debug
-          CANARY=20260807T101545Z-03fb3749
+          CANARY=20260807T103038Z-59a5ab3d
           for name in \
             canary-failure.json \
             voice-calibration-failure.json \
             voice-micro-clause-failure.json \
             voice-review-manifest.json \
+            narration.wav \
             narration-final-attempt.wav \
             voice-review-final.wav \
             package.json \
@@ -50,7 +51,7 @@ jobs:
           find canary-debug -maxdepth 2 -type f -printf '%P\n' | sort
       - uses: actions/upload-artifact@v4
         with:
-          name: vimax-canary-20260807T101545Z-03fb3749-debug
+          name: vimax-canary-20260807T103038Z-59a5ab3d-debug
           path: canary-debug
           retention-days: 14
           if-no-files-found: error
