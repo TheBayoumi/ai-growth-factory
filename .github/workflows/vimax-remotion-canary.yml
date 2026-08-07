@@ -21,6 +21,8 @@ on:
       - "factory/production_voice_micro_clause_fallback_v45.py"
       - "factory/production_voice_orphan_recovery_v50.py"
       - "factory/production_voice_review_convergence_v47.py"
+      - "factory/production_voice_technical_identifier_v42.py"
+      - "factory/production_voice_technical_pacing_v43.py"
       - "factory/production_runtime.py"
       - "renderer/**"
 

@@ -10,21 +10,78 @@ from .video_profile import VideoProfile
 
 
 _INSTALLED = False
-_TECHNICAL_TOKEN_RE = re.compile(r"[A-Za-z0-9]+(?:[._/-][A-Za-z0-9]+)*")
+_NUMERIC_TOKEN_RE = re.compile(
+    r"^(?P<currency>\$)?(?P<sign>[+-])?"
+    r"(?P<integer>(?:\d{1,3}(?:,\d{3})+|\d+))"
+    r"(?:\.(?P<fraction>\d+))?"
+    r"(?P<percent>%?)(?P<suffix_plus>\+?)$"
+)
 _ACTIVE_PACE_MULTIPLIER: ContextVar[float] = ContextVar(
     "voice_technical_identifier_pace_multiplier_v42",
     default=1.0,
 )
 
 
-def technical_token_weight_v42(token: str) -> float:
-    """Estimate spoken word-equivalents only for mixed letter/number identifiers.
+def _integer_spoken_units_v42(value: int) -> int:
+    """Conservatively count English cardinal speech units for a non-negative integer."""
+    value = abs(int(value))
+    if value < 20:
+        return 1
+    if value < 100:
+        return 1 if value % 10 == 0 else 2
+    if value < 1_000:
+        remainder = value % 100
+        return 2 if remainder == 0 else 2 + _integer_spoken_units_v42(remainder)
+    for scale in (1_000_000_000, 1_000_000, 1_000):
+        if value >= scale:
+            leading, remainder = divmod(value, scale)
+            units = _integer_spoken_units_v42(leading) + 1
+            if remainder:
+                units += _integer_spoken_units_v42(remainder)
+            return min(8, units)
+    return 1
 
-    Plain acronyms such as AI remain one publication word. Identifiers such as LFM2.5-2.6B
-    receive bounded additional weight because the synthesizer speaks their letter and number
-    groups separately. The cap prevents a long identifier from weakening the pace gate.
+
+def _numeric_token_weight_v42(value: str) -> float | None:
+    match = _NUMERIC_TOKEN_RE.fullmatch(value)
+    if match is None:
+        return None
+
+    integer = int(match.group("integer").replace(",", ""))
+    units = _integer_spoken_units_v42(integer)
+    fraction = match.group("fraction") or ""
+    if fraction:
+        # Qwen normally speaks decimals digit-by-digit after the word "point".
+        units += 1 + len(fraction)
+    if match.group("currency"):
+        units += 1  # dollar / dollars
+    if match.group("sign"):
+        units += 1  # plus / minus
+    if match.group("percent"):
+        units += 1
+    if match.group("suffix_plus"):
+        units += 1
+    # Keep one unusual numeric token from dominating a segment-level pace decision.
+    return float(min(8, max(1, units)))
+
+
+def technical_token_weight_v42(token: str) -> float:
+    """Estimate deterministic spoken word-equivalents for technical and numeric tokens.
+
+    Plain words and acronyms remain one publication word. Mixed identifiers such as
+    ``LFM2.5-2.6B`` receive bounded extra weight for separately spoken groups. Numeric tokens
+    are counted from their spoken cardinal form, so ``81`` is two units and ``98.6%`` is five
+    ("ninety eight point six percent"). This corrects the measurement denominator only; it does
+    not change the configured WPM window or tempo ceiling.
     """
     value = token.strip(".,;:!?()[]{}\"'")
+    if not value:
+        return 0.0
+
+    numeric = _numeric_token_weight_v42(value)
+    if numeric is not None:
+        return numeric
+
     has_letter = any(character.isalpha() for character in value)
     has_digit = any(character.isdigit() for character in value)
     if not (has_letter and has_digit):
@@ -34,7 +91,9 @@ def technical_token_weight_v42(token: str) -> float:
 
 
 def speech_equivalent_word_count_v42(text: str) -> float:
-    tokens = _TECHNICAL_TOKEN_RE.findall(text)
+    # Whitespace tokens preserve suffixes such as %, +, and comma-grouped numerals that the old
+    # alphanumeric regex discarded before technical_token_weight_v42 could measure them.
+    tokens = text.split()
     if not tokens:
         return 0.0
     return sum(technical_token_weight_v42(token) for token in tokens)
@@ -58,7 +117,7 @@ def _effective_observation(observed_wpm: float) -> float:
 
 
 def install_production_voice_technical_identifier_v42() -> None:
-    """Make technical-identifier pace measurement auditable and fail-closed."""
+    """Make technical/numeric speech pace measurement auditable and fail-closed."""
     global _INSTALLED
     if _INSTALLED:
         return
