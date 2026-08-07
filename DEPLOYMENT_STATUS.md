@@ -1,36 +1,33 @@
-# Deployment status — version 1.3.1
+# Deployment status — Modal only
 
-## Corrective release state
+## Deployment policy
 
-Version 1.3.1 is built and tested locally. It is **not deployed** to Modal and has not produced a real Qwen3-TTS canary.
+AI Growth Factory is a **Modal-only production runtime**.
 
-## Live control plane
+Vercel is not an approved deployment target for this repository. Automatic Git deployments to Vercel are disabled by the repository-level `vercel.json` policy:
 
-- Alias: `https://ai-growth-factory.vercel.app`
-- Last independently verified live release: version `1.2.0`
-- Deployment: `dpl_F2QWaBbMaCesTgx4jQFqonHJpZpA`
-- Purpose: status page and YouTube OAuth bootstrap only.
-- GPU/model execution: disabled by design.
+```json
+{
+  "git": {
+    "deploymentEnabled": false
+  }
+}
+```
 
-The package contains updated 1.3.1 control-plane source, but this corrective turn did not redeploy it.
+Do not deploy this repository, any branch, preview, control plane, OAuth bootstrap, status page, renderer, API, or production worker to Vercel.
 
-## Modal worker
+## Production runtime
 
-Implemented but not deployed because no authorized Modal workspace or owner YouTube secret is connected. Activation still requires:
+- Production compute: Modal.
+- GPU/model execution: Modal only.
+- ViMax planning, Qwen TTS/review, image/video inference, Remotion rendering, persistent canary artifacts, and production scheduling belong to the Modal execution path.
+- GitHub Actions is used only for CI, validation, orchestration, and protected Modal invocation/deployment.
+- Publishing remains fail-closed until the exact production artifact passes all required automated and manual review gates.
 
-1. `modal setup`;
-2. a $30 workspace budget cap;
-3. the owner `YOUTUBE_OAUTH_JSON` secret;
-4. `modal deploy cloud/modal_app.py`;
-5. a real private canary with Qwen3-TTS and Qwen2.5-Omni.
+## Vercel state
 
-## Publication state
+The legacy Vercel control-plane architecture is retired. The currently connected Vercel account exposes no `ai-growth-factory` project, and repository Git deployments to Vercel are explicitly disabled. Any future architecture or automation change that reintroduces Vercel deployment is out of policy.
 
-Publishing must remain disabled until all of the following pass on the same artifact:
+## Modal deployment
 
-- Qwen3-TTS provenance;
-- approved perceptual-review scores;
-- deterministic audio QC;
-- zero hold-jump temporal-stutter windows;
-- correct scene-to-source mapping;
-- private owner review.
+Use only the repository's protected Modal workflows or the documented Modal CLI path for deployment and canary execution. Production secrets must remain in the protected `modal-production` environment / Modal secret store and must never be committed to the repository.
