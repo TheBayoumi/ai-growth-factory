@@ -93,13 +93,24 @@ def sanitize_camera_parent_items(
     parent_items: Sequence[Any],
 ) -> tuple[list[dict[str, Any] | None], list[dict[str, Any]]]:
     """Repair only invalid ViMax camera-tree edges and preserve every valid edge."""
-    if len(cameras) != len(parent_items):
+    if not cameras:
+        raise ValueError("Camera tree requires at least one camera")
+
+    root_omission_repair: dict[str, Any] | None = None
+    if len(parent_items) == len(cameras) - 1 and int(cameras[0].idx) == 0:
+        parent_items = [None, *list(parent_items)]
+        root_omission_repair = {
+            "camera_idx": 0,
+            "issue": "omitted_root_parent_item",
+            "old_length": len(cameras) - 1,
+            "new_length": len(cameras),
+            "new_value": None,
+        }
+    elif len(cameras) != len(parent_items):
         raise ValueError(
             f"Camera tree response length mismatch: expected {len(cameras)}, "
             f"got {len(parent_items)}"
         )
-    if not cameras:
-        raise ValueError("Camera tree requires at least one camera")
 
     camera_by_idx = {int(camera.idx): camera for camera in cameras}
     camera_order = [int(camera.idx) for camera in cameras]
@@ -109,6 +120,8 @@ def sanitize_camera_parent_items(
         raise ValueError(f"The first ViMax camera must be camera 0; got {camera_order[0]}")
     order_position = {camera_idx: index for index, camera_idx in enumerate(camera_order)}
     repairs: list[dict[str, Any]] = []
+    if root_omission_repair is not None:
+        repairs.append(root_omission_repair)
     normalized: dict[int, dict[str, Any] | None] = {}
 
     def earlier_parent(camera_idx: int, *, excluded: set[int] | None = None) -> int:
@@ -399,8 +412,13 @@ def _install_camera_tree_repair() -> None:
                 )
             ),
             camera_module.HumanMessage(
-                content=camera_module.human_prompt_template_select_reference_camera.format(
-                    camera_seq_str=camera_seq_str
+                content=(
+                    camera_module.human_prompt_template_select_reference_camera.format(
+                        camera_seq_str=camera_seq_str
+                    )
+                    + f"\nReturn exactly {len(cameras)} camera_parent_items ordered for "
+                    f"camera indices 0..{len(cameras) - 1}. The first item MUST be null "
+                    "because camera 0 is the root. Do not omit the root entry."
                 )
             ),
         ]

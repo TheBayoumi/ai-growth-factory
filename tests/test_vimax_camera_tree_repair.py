@@ -100,6 +100,24 @@ class ViMaxCameraTreeRepairTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "length mismatch"):
             sanitize_camera_parent_items(self._cameras(), [None])
 
+    def test_repairs_only_omitted_root_parent_item(self) -> None:
+        normalized, repairs = sanitize_camera_parent_items(
+            self._cameras(),
+            [
+                self._item(0, 1),
+                self._item(1, 3),
+                self._item(2, 5),
+            ],
+        )
+        self.assertIsNone(normalized[0])
+        self.assertEqual([None, 0, 1, 2], [
+            None if item is None else item["parent_cam_idx"] for item in normalized
+        ])
+        self.assertIn(
+            "omitted_root_parent_item",
+            {item["issue"] for item in repairs},
+        )
+
     def test_normalizes_integer_parent_shorthand_before_pydantic(self) -> None:
         response, repairs = parse_camera_tree_response(
             SimpleNamespace(
