@@ -109,11 +109,33 @@ def _parse_candidate(candidate: str) -> dict[str, Any] | None:
     return None
 
 
-def extract_visual_review_json_v49(text: str) -> dict[str, Any]:
-    """Parse reviewer JSON with bounded syntax-only recovery and fail closed otherwise."""
+def _malformed_error(clean: str, detail: str = "") -> Exception:
     from .production_visual_quality import VisualQualityError
 
+    digest = hashlib.sha256(clean.encode("utf-8", errors="replace")).hexdigest()
+    excerpt = " ".join(clean.split())[:240]
+    suffix = f"; {detail}" if detail else ""
+    return VisualQualityError(
+        "Visual reviewer returned malformed JSON after bounded syntax recovery; "
+        f"response_sha256={digest}; excerpt={excerpt!r}{suffix}"
+    )
+
+
+def extract_visual_review_json_v49(text: str) -> dict[str, Any]:
+    """Parse reviewer JSON with bounded syntax-only recovery and fail closed otherwise."""
     clean = _strip_fence(text)
+
+    # A syntactically valid top-level payload has authoritative shape. Never tunnel into an
+    # array and approve an object nested inside it; the reviewer contract requires one object.
+    try:
+        top_level = json.loads(clean)
+    except json.JSONDecodeError:
+        top_level = None
+    else:
+        if isinstance(top_level, dict):
+            return top_level
+        raise _malformed_error(clean, "top-level reviewer JSON must be an object")
+
     candidates: list[str] = [clean]
     candidates.extend(candidate for candidate in _balanced_objects(clean) if candidate != clean)
     for candidate in candidates:
@@ -121,12 +143,7 @@ def extract_visual_review_json_v49(text: str) -> dict[str, Any]:
         if value is not None:
             return value
 
-    digest = hashlib.sha256(clean.encode("utf-8", errors="replace")).hexdigest()
-    excerpt = " ".join(clean.split())[:240]
-    raise VisualQualityError(
-        "Visual reviewer returned malformed JSON after bounded syntax recovery; "
-        f"response_sha256={digest}; excerpt={excerpt!r}"
-    )
+    raise _malformed_error(clean)
 
 
 def _is_malformed_json_error(exc: Exception) -> bool:
