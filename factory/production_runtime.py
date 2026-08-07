@@ -81,6 +81,9 @@ def install_production_runtime() -> None:
     from .production_voice_micro_clause_fallback_v45 import (
         install_production_voice_micro_clause_fallback_v45,
     )
+    from .production_voice_orphan_recovery_v50 import (
+        install_production_voice_orphan_recovery_v50,
+    )
     from .production_voice_repair import install_production_voice_repair
     from .production_voice_runtime_v28 import install_production_voice_runtime_v28
     from .production_voice_technical_identifier_v42 import (
@@ -113,9 +116,9 @@ def install_production_runtime() -> None:
     install_production_renderer()
     install_production_scene_metadata()
 
-    # Voice quality remains fail-closed. v42 corrects mixed identifier measurement and v43 makes
-    # the final sentence pacing stage consume the same auditable spoken-equivalent metric. v45
-    # installs last and only activates after the older bounded recovery layers exhaust themselves.
+    # Voice quality remains fail-closed. v50 repairs generator-sized segment topology only; it
+    # does not change the 138-146 WPM publication window or the 1.15x tempo ceiling. v42/v43 then
+    # apply auditable technical-token pacing and v45 remains the bounded last-resort TTS fallback.
     install_production_editorial_v28()
     install_production_editorial_wan_allocator_v38()
     install_production_voice_bounds_v28()
@@ -125,6 +128,7 @@ def install_production_runtime() -> None:
     install_production_voice_convergence_v28()
     install_production_voice_editorial_pacing_v28()
     install_production_voice_capacity_v29()
+    install_production_voice_orphan_recovery_v50()
     install_production_voice_clause_fallback_v33()
     install_production_voice_technical_identifier_v42()
     install_production_voice_technical_pacing_v43()
