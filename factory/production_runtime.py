@@ -55,6 +55,9 @@ def install_production_runtime() -> None:
     from .production_visual_retry_grounding_v35 import (
         install_production_visual_retry_grounding_v35,
     )
+    from .production_visual_review_json_v49 import (
+        install_production_visual_review_json_v49,
+    )
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_runtime_v28 import install_production_visual_runtime_v28
     from .production_visual_semantic_review_v28 import (
@@ -131,6 +134,9 @@ def install_production_runtime() -> None:
     # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
+    # v49 hardens only the reviewer serialization boundary. It cannot relax semantic thresholds
+    # or convert a rejected image into an approval; malformed model JSON remains fail-closed.
+    install_production_visual_review_json_v49()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
     install_production_visual_storyboard_v30()
