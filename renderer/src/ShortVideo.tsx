@@ -11,6 +11,7 @@ import {
   useCurrentFrame,
 } from 'remotion';
 import type {CaptionCue, RenderShot, RenderSpec} from './schema.js';
+import {transitionFramesBetween} from './transitions.js';
 
 const clamp = {
   extrapolateLeft: 'clamp' as const,
@@ -238,14 +239,12 @@ export const ShortVideo: React.FC<RenderSpec> = (spec) => {
       {spec.shots.map((shot, index) => {
         const previous = index > 0 ? spec.shots[index - 1] : undefined;
         const next = index + 1 < spec.shots.length ? spec.shots[index + 1] : undefined;
-        const incomingFrames =
-          previous?.renderer === 'image_motion'
-            ? Math.min(spec.transition_frames, Math.floor(shot.duration_in_frames / 3))
-            : 0;
-        const outgoingFrames =
-          next && shot.renderer === 'image_motion'
-            ? Math.min(spec.transition_frames, Math.floor(shot.duration_in_frames / 3))
-            : 0;
+        const incomingFrames = previous
+          ? transitionFramesBetween(previous, shot, spec.transition_frames)
+          : 0;
+        const outgoingFrames = next
+          ? transitionFramesBetween(shot, next, spec.transition_frames)
+          : 0;
         return (
           <Sequence
             key={shot.shot_id}

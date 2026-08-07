@@ -27,6 +27,14 @@ def install_production_visual_audit_v45() -> None:
     if _INSTALLED:
         return
 
+    # Runtime installs this audit adapter after the Remotion compositor. Add the backend-aware
+    # transition proof here so both the cheap animatic and final render use the same wrapper.
+    from .production_transition_evidence_v48 import (
+        install_production_transition_evidence_v48,
+    )
+
+    install_production_transition_evidence_v48()
+
     from . import canary, pipeline
 
     current_pipeline = pipeline._persist_visual_audit
