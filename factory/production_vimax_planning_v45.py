@@ -58,6 +58,9 @@ def install_production_vimax_planning_v45() -> None:
     from .production_package_capacity_v46 import (
         install_production_package_capacity_v46,
     )
+    from .production_voice_review_convergence_v47 import (
+        install_production_voice_review_convergence_v47,
+    )
     from .vimax_planner import (
         build_vimax_editorial_plan,
         construct_vimax_visual_plan,
@@ -68,6 +71,11 @@ def install_production_vimax_planning_v45() -> None:
     # upstream package capacity contract before any content is generated so the migration path
     # does not waste authoritative candidates on contradictory word-count instructions.
     install_production_package_capacity_v46()
+
+    # Qwen Omni returns auditable per-segment scores. Keep retries segment-local and retain
+    # previously approved generations when a later review flips only on subjective cadence.
+    install_production_voice_review_convergence_v47()
+
     _install_business_environment_diversity_v45()
     current_persist_visual_plan = visual_pipeline.persist_visual_plan
 

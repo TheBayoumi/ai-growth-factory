@@ -17,6 +17,7 @@ on:
       - "factory/production_remotion_renderer_v45.py"
       - "factory/production_visual_audit_v45.py"
       - "factory/production_voice_micro_clause_fallback_v45.py"
+      - "factory/production_voice_review_convergence_v47.py"
       - "factory/production_runtime.py"
       - "renderer/**"
 
