@@ -1,0 +1,70 @@
+name: Export canary 91160cd6 for review
+
+on:
+  push:
+    branches:
+      - debug/export-canary-20260807-91160cd6
+    paths:
+      - ".github/workflows/export-canary-20260807-91160cd6.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - name: Export persisted production evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANARY=20260807T180823Z-91160cd6
+          ROOT="canaries/${CANARY}"
+          mkdir -p canary-review
+          modal volume ls ai-growth-factory-state "$ROOT" > canary-review/volume-listing.txt || true
+          cat canary-review/volume-listing.txt || true
+          for name in \
+            canary-failure.json \
+            video.mp4 \
+            narration.wav \
+            thumbnail.png \
+            video-qc-report.json \
+            voice-review-manifest.json \
+            package.json \
+            trend-snapshot.json \
+            visual-plan.json \
+            visual-pipeline-manifest.json \
+            keyframe-manifest.json \
+            scene-media-manifest.json \
+            animated-captions.ass \
+            animated-captions.json \
+            visual-composition-manifest.json \
+            visual-compositor.log \
+            vimax-plan.json \
+            remotion-render-spec.json \
+            remotion-staged-render-spec.json \
+            remotion-render-manifest.json \
+            remotion-render.log \
+            production-preflight.json \
+            preflight-animatic.mp4; do
+            modal volume get --force ai-growth-factory-state "$ROOT/$name" "canary-review/$name" || true
+          done
+          find canary-review -maxdepth 2 -type f -printf '%P %s bytes\n' | sort
+          test -s canary-review/video.mp4
+          test -s canary-review/narration.wav
+      - uses: actions/upload-artifact@v4
+        with:
+          name: canary-20260807T180823Z-91160cd6-review
+          path: canary-review
+          retention-days: 14
+          if-no-files-found: error
