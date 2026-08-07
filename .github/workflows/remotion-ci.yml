@@ -10,7 +10,9 @@ on:
       - "factory/production_package_capacity_v46.py"
       - "factory/production_spoken_duration_capacity_v51.py"
       - "factory/production_remotion_renderer_v45.py"
+      - "factory/production_remotion_motion_qc_v53.py"
       - "factory/production_vimax_planning_v45.py"
+      - "factory/production_vimax_visual_authority_v52.py"
       - "factory/production_visual_audit_v45.py"
       - "factory/production_transition_evidence_v48.py"
       - "factory/production_visual_review_json_v49.py"
@@ -24,6 +26,8 @@ on:
       - "tests/test_production_package_capacity_v46.py"
       - "tests/test_production_spoken_duration_capacity_v51.py"
       - "tests/test_production_transition_evidence_v48.py"
+      - "tests/test_production_vimax_visual_authority_v52.py"
+      - "tests/test_production_remotion_motion_qc_v53.py"
       - "tests/test_visual_review_json_v49.py"
       - "tests/test_voice_micro_clause_fallback_v45.py"
       - "tests/test_voice_orphan_recovery_v50.py"
@@ -41,7 +45,7 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,7 +69,7 @@ jobs:
 
   renderer:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

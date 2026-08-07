@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
   # Controlled branch-only migration validation. Every file capable of changing the live ViMax,
   # voice-recovery, script-capacity, media-contract, reviewer, or Remotion path must trigger the
-  # exact end-to-end canary. The v51 duration-contract regression is included because it encodes
-  # the same spoken-equivalent capacity boundary consumed by live TTS and exact preflight.
+  # exact end-to-end canary. The v52/v53 adapters are included because they carry ViMax semantic
+  # and motion authority into generation/Remotion and define the reviewed Remotion motion gate.
   push:
     branches:
       - verify/modal-gpu-editorial-v28-20260804
@@ -18,7 +18,9 @@ on:
       - "factory/production_package_capacity_v46.py"
       - "factory/production_spoken_duration_capacity_v51.py"
       - "factory/production_vimax_planning_v45.py"
+      - "factory/production_vimax_visual_authority_v52.py"
       - "factory/production_remotion_renderer_v45.py"
+      - "factory/production_remotion_motion_qc_v53.py"
       - "factory/production_visual_audit_v45.py"
       - "factory/production_transition_evidence_v48.py"
       - "factory/production_visual_review_json_v49.py"
@@ -29,6 +31,8 @@ on:
       - "factory/production_voice_technical_pacing_v43.py"
       - "factory/production_runtime.py"
       - "tests/test_production_spoken_duration_capacity_v51.py"
+      - "tests/test_production_vimax_visual_authority_v52.py"
+      - "tests/test_production_remotion_motion_qc_v53.py"
       - "renderer/**"
 
 permissions:

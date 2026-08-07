@@ -33,6 +33,9 @@ def install_production_runtime() -> None:
     )
     from .production_relationship_grounding import install_production_relationship_grounding
     from .production_renderer import install_production_renderer
+    from .production_remotion_motion_qc_v53 import (
+        install_production_remotion_motion_qc_v53,
+    )
     from .production_reviewer_feedback import install_production_reviewer_feedback
     from .production_scene_metadata import install_production_scene_metadata
     from .production_settings import install_production_settings
@@ -71,6 +74,9 @@ def install_production_runtime() -> None:
     from .production_visual_storyboard_v30 import install_production_visual_storyboard_v30
     from .production_visual_subject_authority_v31 import (
         install_production_visual_subject_authority_v31,
+    )
+    from .production_vimax_visual_authority_v52 import (
+        install_production_vimax_visual_authority_v52,
     )
     from .production_voice_bounds_v28 import install_production_voice_bounds_v28
     from .production_voice_calibration_v28 import install_production_voice_calibration_v28
@@ -174,4 +180,10 @@ def install_production_runtime() -> None:
     install_production_vimax_planning_v45()
     install_production_remotion_renderer_v45()
     install_production_visual_audit_v45()
+
+    # v52/v53 are intentionally installed after every legacy visual adapter and the Remotion
+    # compositor. v52 restores ViMax semantic + motion authority end-to-end; v53 evaluates smooth
+    # deterministic Remotion transforms as motion while still rejecting freezes and real jumps.
+    install_production_vimax_visual_authority_v52()
+    install_production_remotion_motion_qc_v53()
     _INSTALLED = True
