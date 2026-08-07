@@ -32,8 +32,10 @@ export const buildTransitionPlan = (
 ): TransitionBoundary[] => {
   const transitions: TransitionBoundary[] = [];
   for (let index = 0; index + 1 < shots.length; index += 1) {
-    const outgoing = shots[index];
-    const incoming = shots[index + 1];
+    // The loop condition proves both entries exist; explicit assertions preserve that fact
+    // under TypeScript's noUncheckedIndexedAccess mode.
+    const outgoing = shots[index]!;
+    const incoming = shots[index + 1]!;
     const frames = transitionFramesBetween(outgoing, incoming, requestedFrames);
     if (frames <= 0) {
       continue;
