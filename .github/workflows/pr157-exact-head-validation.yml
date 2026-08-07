@@ -18,13 +18,13 @@ env:
 
 concurrency:
   group: pr157-exact-head-validation
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   python:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 157
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,7 +53,7 @@ jobs:
   renderer:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 157
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
