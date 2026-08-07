@@ -30,6 +30,24 @@ _FAILED_HSP_NARRATION = (
     "corrections, and repeatability so the decision follows measured behavior rather than a "
     "polished announcement."
 )
+_PLAIN_WORDS = (
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel",
+    "india",
+    "juliet",
+    "kilo",
+    "lima",
+)
+
+
+def _plain_narration(word_count: int) -> str:
+    return " ".join(_PLAIN_WORDS[index % len(_PLAIN_WORDS)] for index in range(word_count))
 
 
 class SpokenDurationCapacityV51Tests(unittest.TestCase):
@@ -70,7 +88,7 @@ class SpokenDurationCapacityV51Tests(unittest.TestCase):
             validate_spoken_duration_capacity_v51(package)
 
     def test_plain_132_word_script_stays_inside_spoken_budget(self) -> None:
-        narration = " ".join(f"word{index}" for index in range(132))
+        narration = _plain_narration(132)
         package = self._package(narration)
         self.assertEqual(validate_spoken_duration_capacity_v51(package), 132.0)
 
@@ -86,7 +104,7 @@ class SpokenDurationCapacityV51Tests(unittest.TestCase):
             projected_narration_segments_v51(settings, package, profile)
 
     def test_plain_132_word_projection_fits_frozen_window(self) -> None:
-        narration = " ".join(f"word{index}" for index in range(132))
+        narration = _plain_narration(132)
         package = self._package(narration)
         segments, duration = projected_narration_segments_v51(
             Settings.from_env(),
