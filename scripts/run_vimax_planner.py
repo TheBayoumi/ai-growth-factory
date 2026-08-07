@@ -240,6 +240,133 @@ def sanitize_camera_parent_items(
     return [normalized[camera_idx] for camera_idx in camera_order], repairs
 
 
+def _message_content(response: Any) -> Any:
+    if isinstance(response, (dict, list, str)):
+        return response
+    return getattr(response, "content", response)
+
+
+def _content_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        if isinstance(content.get("text"), str):
+            return str(content["text"])
+        return json.dumps(content, ensure_ascii=False)
+    if isinstance(content, list):
+        pieces: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                pieces.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                pieces.append(str(item["text"]))
+            elif hasattr(item, "text"):
+                pieces.append(str(item.text))
+        if pieces:
+            return "\n".join(pieces)
+        return json.dumps(content, ensure_ascii=False)
+    return str(content)
+
+
+def _extract_json_object(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return dict(content)
+    text = _content_text(content).strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().casefold() in {"```", "```json"}:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        if start < 0:
+            raise ValueError("ViMax camera-tree response contained no JSON object")
+        decoder = json.JSONDecoder()
+        try:
+            parsed, _end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"ViMax camera-tree response contained invalid JSON: {exc}"
+            ) from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("ViMax camera-tree response must be a JSON object")
+    return parsed
+
+
+def normalize_camera_tree_response_payload(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Normalize only known shorthand before upstream Pydantic validation."""
+    raw_items = payload.get("camera_parent_items")
+    if not isinstance(raw_items, list):
+        raise ValueError("ViMax camera-tree response camera_parent_items must be a list")
+
+    normalized_items: list[Any] = []
+    repairs: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_items):
+        if item is None:
+            normalized_items.append(None)
+            continue
+        if isinstance(item, bool):
+            raise ValueError(
+                f"ViMax camera-tree item {index} cannot use a boolean parent shorthand"
+            )
+        if isinstance(item, int):
+            normalized_items.append(
+                {
+                    "parent_cam_idx": item,
+                    "parent_shot_idx": None,
+                    "reason": (
+                        "ViMax emitted parent-camera integer shorthand; "
+                        "the adapter will resolve the nearest valid parent shot."
+                    ),
+                    "is_parent_fully_covers_child": None,
+                    "missing_info": None,
+                }
+            )
+            repairs.append(
+                {
+                    "camera_idx": index,
+                    "issue": "integer_parent_shorthand",
+                    "old_value": item,
+                    "new_parent_cam_idx": item,
+                }
+            )
+            continue
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"ViMax camera-tree item {index} must be null, an integer shorthand, "
+                "or a parent metadata object"
+            )
+        normalized_item = dict(item)
+        normalized_item.setdefault(
+            "reason",
+            "ViMax supplied camera-parent metadata without an explanation.",
+        )
+        normalized_item.setdefault("parent_shot_idx", None)
+        normalized_item.setdefault("is_parent_fully_covers_child", None)
+        normalized_item.setdefault("missing_info", None)
+        normalized_items.append(normalized_item)
+
+    normalized_payload = dict(payload)
+    normalized_payload["camera_parent_items"] = normalized_items
+    return normalized_payload, repairs
+
+
+def parse_camera_tree_response(
+    response: Any,
+    *,
+    response_model: Any,
+) -> tuple[Any, list[dict[str, Any]]]:
+    payload = _extract_json_object(_message_content(response))
+    normalized_payload, repairs = normalize_camera_tree_response_payload(payload)
+    return response_model.model_validate(normalized_payload), repairs
+
+
 def _install_camera_tree_repair() -> None:
     import agents.camera_image_generator as camera_module
 
@@ -277,11 +404,15 @@ def _install_camera_tree_repair() -> None:
                 )
             ),
         ]
-        response = await (self.chat_model | parser).ainvoke(messages)
-        normalized, repairs = sanitize_camera_parent_items(
+        raw_response = await self.chat_model.ainvoke(messages)
+        response, shape_repairs = parse_camera_tree_response(
+            raw_response,
+            response_model=camera_module.CameraTreeResponse,
+        )
+        normalized, tree_repairs = sanitize_camera_parent_items(
             cameras, response.camera_parent_items
         )
-        self._agf_camera_tree_repairs = repairs
+        self._agf_camera_tree_repairs = [*shape_repairs, *tree_repairs]
         for camera, payload in zip(cameras, normalized, strict=True):
             if payload is None:
                 camera.parent_cam_idx = None
