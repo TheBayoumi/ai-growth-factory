@@ -32,10 +32,10 @@ from cloud.modal_app import (
 def render_vimax_temporal_canary() -> dict[str, object]:
     """Validate the all-temporal ViMax -> Factory -> Remotion release path.
 
-    Scheduled production remains untouched. The current Modal workspace permits A10 compute without
-    adding a payment method, so validation retains the proven A10 + CPU-offload memory strategy while
-    still requiring twenty native temporal clips, 24 Wan sampling steps, and every publication gate.
-    Publishing is always disabled.
+    Scheduled production remains untouched. Validation retains the proven A10 + CPU-offload
+    memory strategy while requiring twenty native temporal clips and every publication gate.
+    Publishing is always disabled. The v62/v63 adapters are installed after the legacy runtime
+    so approved infrastructure prompts and human-review evidence remain authoritative.
     """
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
@@ -44,7 +44,19 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     os.environ["WAN22_MIN_FRAME_NUM"] = "41"
     os.environ["WAN22_MAX_FRAME_NUM"] = "81"
     os.environ["WAN22_MODEL_CPU_OFFLOAD"] = "true"
+    os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "false"
     _prepare_runtime()
+
+    from factory.production_keyframe_human_gate_v63 import (
+        install_production_keyframe_human_gate_v63,
+    )
+    from factory.production_vimax_infrastructure_grammar_v62 import (
+        install_production_vimax_infrastructure_grammar_v62,
+    )
+
+    install_production_vimax_infrastructure_grammar_v62()
+    install_production_keyframe_human_gate_v63()
+
     result = _run_render_canary()
     return {
         **result,
@@ -52,5 +64,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
         "media_contract": "all_native_temporal_v55",
         "render_backend": "remotion",
         "validation_gpu": "A10",
+        "editorial_grammar": "ai_infrastructure_v62_when_applicable",
+        "human_keyframe_dossier": "keyframe-human-review-dossier.json",
         "vimax_commit": VIMAX_COMMIT,
     }

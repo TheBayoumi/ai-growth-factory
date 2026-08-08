@@ -1,4 +1,4 @@
-name: Run ViMax Remotion GPU Canary
+name: Run ViMax HITL Preproduction
 
 on:
   workflow_dispatch:
@@ -7,13 +7,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: modal-vimax-remotion-canary
+  group: modal-vimax-hitl-preproduction
   cancel-in-progress: true
 
 jobs:
-  canary:
+  preproduction:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 75
     environment: modal-production
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -25,13 +25,33 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
       - run: python scripts/repository_preflight.py
-      - name: Invoke all-temporal ViMax + Remotion canary
+      - name: Generate machine-reviewed keyframes and pause before Wan
         run: |
           set -o pipefail
-          modal run -m cloud.modal_vimax_temporal_canary::app.render_vimax_temporal_canary | tee vimax-remotion-canary-result.txt
+          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review | tee vimax-hitl-result.txt
+          if grep -q 'awaiting_human_keyframe_review' vimax-hitl-result.txt; then
+            echo 'Keyframes are ready for mandatory human editorial review. Temporal generation is intentionally blocked.'
+            exit 1
+          fi
+      - name: Export complete preproduction canary directory
+        if: always()
+        run: |
+          set -u
+          CANARY=$(grep -Eo '[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+' vimax-hitl-result.txt 2>/dev/null | tail -1 || true)
+          if [ -z "$CANARY" ]; then
+            echo "No canary id was emitted; nothing to export."
+            exit 0
+          fi
+          echo "$CANARY" > canary-id.txt
+          mkdir -p canary-artifacts
+          modal volume get --force ai-growth-factory-state "canaries/${CANARY}" canary-artifacts || true
+          find canary-artifacts -type f -printf '%P\n' | sort || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: vimax-remotion-canary-result
-          path: vimax-remotion-canary-result.txt
+          name: vimax-hitl-preproduction
+          path: |
+            canary-id.txt
+            vimax-hitl-result.txt
+            canary-artifacts
           retention-days: 14
