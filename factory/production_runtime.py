@@ -26,6 +26,7 @@ def install_production_runtime() -> None:
     from .production_narration_integrity_v28 import install_production_narration_integrity_v28
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
+    from .production_package_boundary_v54 import install_production_package_boundary_v54
     from .production_package_capacity_v46 import install_production_package_capacity_v46
     from .production_pacing import install_production_pacing
     from .production_qwen_omni_bitsandbytes_v28 import (
@@ -75,6 +76,9 @@ def install_production_runtime() -> None:
     from .production_visual_subject_authority_v31 import (
         install_production_visual_subject_authority_v31,
     )
+    from .production_vimax_temporal_video_v55 import (
+        install_production_vimax_temporal_video_v55,
+    )
     from .production_vimax_visual_authority_v52 import (
         install_production_vimax_visual_authority_v52,
     )
@@ -108,10 +112,13 @@ def install_production_runtime() -> None:
     install_production_source_publisher_canonicalization()
     install_production_narration_length_repair()
     install_production_content_gate()
-    # v46 was accidentally dropped from runtime during later migration edits. Restore it before
-    # v51 so scene/body limits and repair prompts converge before the spoken-duration gate runs.
+    # v46 converges generated package capacity before the spoken-duration validator.
     install_production_package_capacity_v46()
     install_production_spoken_duration_capacity_v51()
+    # v54 is deliberately outside the earlier LLM wrappers. It removes only harmless scene
+    # heading/body overflow before strict validation, preventing expensive trend churn for one
+    # extra adjective while preserving every source, source_index, and hard narration gate.
+    install_production_package_boundary_v54()
     install_production_narration_integrity_v28()
     install_production_source_deduplication()
     install_production_relationship_grounding()
@@ -181,9 +188,11 @@ def install_production_runtime() -> None:
     install_production_remotion_renderer_v45()
     install_production_visual_audit_v45()
 
-    # v52/v53 are intentionally installed after every legacy visual adapter and the Remotion
-    # compositor. v52 restores ViMax semantic + motion authority end-to-end; v53 evaluates smooth
-    # deterministic Remotion transforms as motion while still rejecting freezes and real jumps.
+    # v52/v53 repair ViMax semantic/motion authority and the legacy Remotion motion metric.
     install_production_vimax_visual_authority_v52()
     install_production_remotion_motion_qc_v53()
+    # v55 is the final ViMax release authority. On the explicitly enabled ViMax path every planned
+    # shot must become native temporal source media; image/Ken-Burns fallback is a hard failure.
+    # It installs last so no legacy Wan-budget or still-image adapter can undo this contract.
+    install_production_vimax_temporal_video_v55()
     _INSTALLED = True
