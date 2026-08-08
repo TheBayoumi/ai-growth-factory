@@ -66,6 +66,9 @@ def install_production_runtime() -> None:
     from .production_visual_review_json_v49 import (
         install_production_visual_review_json_v49,
     )
+    from .production_visual_reviewer_resilience_v59 import (
+        install_production_visual_reviewer_resilience_v59,
+    )
     from .production_visual_routing import install_production_visual_routing
     from .production_visual_runtime_v28 import install_production_visual_runtime_v28
     from .production_visual_semantic_review_v28 import (
@@ -75,6 +78,9 @@ def install_production_runtime() -> None:
     from .production_visual_storyboard_v30 import install_production_visual_storyboard_v30
     from .production_visual_subject_authority_v31 import (
         install_production_visual_subject_authority_v31,
+    )
+    from .production_vimax_editorial_grammar_v58 import (
+        install_production_vimax_editorial_grammar_v58,
     )
     from .production_vimax_temporal_video_v55 import (
         install_production_vimax_temporal_video_v55,
@@ -160,9 +166,11 @@ def install_production_runtime() -> None:
     # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
-    # v49 hardens only the reviewer serialization boundary. It cannot relax semantic thresholds
-    # or convert a rejected image into an approval; malformed model JSON remains fail-closed.
+    # v49 hardens the syntax boundary. v59 sits outside that bounded reviewer-only retry loop and
+    # turns repeated serialization failure into a scene regeneration with zero alignment. It can
+    # never approve malformed reviewer output; the normal scene-attempt ceiling still fails closed.
     install_production_visual_review_json_v49()
+    install_production_visual_reviewer_resilience_v59()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
     install_production_visual_storyboard_v30()
@@ -191,8 +199,10 @@ def install_production_runtime() -> None:
     # v52/v53 repair ViMax semantic/motion authority and the legacy Remotion motion metric.
     install_production_vimax_visual_authority_v52()
     install_production_remotion_motion_qc_v53()
-    # v55 is the final ViMax release authority. On the explicitly enabled ViMax path every planned
-    # shot must become native temporal source media; image/Ken-Burns fallback is a hard failure.
-    # It installs last so no legacy Wan-budget or still-image adapter can undo this contract.
+    # v55 is the ViMax temporal release authority. Every planned shot becomes native temporal
+    # source media and image/Ken-Burns fallback is a hard failure.
     install_production_vimax_temporal_video_v55()
+    # v58 installs after the temporal authority so it can replace the generic AI-lab physicalizer
+    # with topic-aware, filmable editorial B-roll while retaining all 20 temporal shot contracts.
+    install_production_vimax_editorial_grammar_v58()
     _INSTALLED = True
