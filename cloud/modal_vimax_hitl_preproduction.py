@@ -48,16 +48,20 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "true"
     _prepare_runtime()
 
-    # These adapters intentionally install after the legacy/v58 runtime stack so they own the
-    # final ViMax infrastructure grammar and the final pre-Wan human checkpoint.
+    # Install after the legacy runtime so ViMax planning, preflight, generation, retry and review
+    # share one exact filmable storyboard. v63 then stops the run after those keyframes exist.
     from factory.production_keyframe_human_gate_v63 import (
         install_production_keyframe_human_gate_v63,
     )
     from factory.production_vimax_infrastructure_grammar_v62 import (
         install_production_vimax_infrastructure_grammar_v62,
     )
+    from factory.production_vimax_unified_storyboard_v64 import (
+        install_production_vimax_unified_storyboard_v64,
+    )
 
     install_production_vimax_infrastructure_grammar_v62()
+    install_production_vimax_unified_storyboard_v64()
     install_production_keyframe_human_gate_v63()
 
     from factory.canary import run_production_canary
@@ -77,7 +81,7 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
             "media_contract": "all_native_temporal_v55_after_human_keyframe_approval",
             "render_backend": "remotion_after_human_keyframe_approval",
             "human_gate": "pre_wan_keyframe_review_v63",
-            "editorial_grammar": "ai_infrastructure_v62_when_applicable",
+            "editorial_grammar": "unified_vimax_storyboard_v64",
             "vimax_commit": VIMAX_COMMIT,
         }
     if result.get("status") != "verified_render_canary":
