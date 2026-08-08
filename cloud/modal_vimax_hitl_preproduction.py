@@ -44,12 +44,14 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
 
     from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
     from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
+    from factory.production_vimax_human_editorial_v66 import install_production_vimax_human_editorial_v66
     from factory.production_vimax_infrastructure_grammar_v62 import install_production_vimax_infrastructure_grammar_v62
     from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
 
     install_production_editorial_boundary_v65()
     install_production_vimax_infrastructure_grammar_v62()
     install_production_vimax_unified_storyboard_v64()
+    install_production_vimax_human_editorial_v66()
     install_production_keyframe_human_gate_v63()
 
     from factory.canary import run_production_canary
@@ -69,8 +71,8 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
             "media_contract": "all_native_temporal_v55_after_human_keyframe_approval",
             "render_backend": "remotion_after_human_keyframe_approval",
             "human_gate": "pre_wan_keyframe_review_v63",
-            "editorial_grammar": "unified_vimax_storyboard_v64",
-            "editorial_boundary": "post_grounding_capacity_and_authority_v65",
+            "editorial_grammar": "human_editorial_v66",
+            "editorial_boundary": "post_grounding_capacity_authority_and_consumer_copy_v66",
             "vimax_commit": VIMAX_COMMIT,
         }
     if result.get("status") != "verified_render_canary":

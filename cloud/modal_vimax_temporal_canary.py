@@ -33,8 +33,8 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     """Validate the all-temporal ViMax -> Factory -> Remotion release path.
 
     This stage is used only after the exact keyframes have passed the pre-Wan human gate. The
-    same v64 storyboard remains authoritative for preflight, generation, retry and review.
-    Publishing stays disabled.
+    same package/editorial boundaries and human-approved storyboard grammar are reinstalled for
+    the full temporal run. Publishing stays disabled.
     """
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
@@ -46,18 +46,16 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "false"
     _prepare_runtime()
 
-    from factory.production_keyframe_human_gate_v63 import (
-        install_production_keyframe_human_gate_v63,
-    )
-    from factory.production_vimax_infrastructure_grammar_v62 import (
-        install_production_vimax_infrastructure_grammar_v62,
-    )
-    from factory.production_vimax_unified_storyboard_v64 import (
-        install_production_vimax_unified_storyboard_v64,
-    )
+    from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
+    from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
+    from factory.production_vimax_human_editorial_v66 import install_production_vimax_human_editorial_v66
+    from factory.production_vimax_infrastructure_grammar_v62 import install_production_vimax_infrastructure_grammar_v62
+    from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
 
+    install_production_editorial_boundary_v65()
     install_production_vimax_infrastructure_grammar_v62()
     install_production_vimax_unified_storyboard_v64()
+    install_production_vimax_human_editorial_v66()
     install_production_keyframe_human_gate_v63()
 
     result = _run_render_canary()
@@ -67,7 +65,8 @@ def render_vimax_temporal_canary() -> dict[str, object]:
         "media_contract": "all_native_temporal_v55",
         "render_backend": "remotion",
         "validation_gpu": "A10",
-        "editorial_grammar": "unified_vimax_storyboard_v64",
+        "editorial_grammar": "human_editorial_v66",
+        "editorial_boundary": "post_grounding_capacity_authority_and_consumer_copy_v66",
         "human_keyframe_dossier": "keyframe-human-review-dossier.json",
         "vimax_commit": VIMAX_COMMIT,
     }
