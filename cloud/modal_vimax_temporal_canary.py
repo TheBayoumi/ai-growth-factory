@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 
 import modal
@@ -54,9 +53,3 @@ def render_vimax_temporal_canary() -> dict[str, object]:
         "validation_gpu": "L40S",
         "vimax_commit": VIMAX_COMMIT,
     }
-
-
-@app.local_entrypoint()
-def main() -> None:
-    result = render_vimax_temporal_canary.remote()
-    print(json.dumps(result, ensure_ascii=False))

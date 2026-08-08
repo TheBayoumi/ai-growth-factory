@@ -28,7 +28,7 @@ jobs:
       - name: Invoke all-temporal ViMax + Remotion canary
         run: |
           set -o pipefail
-          modal run -m cloud.modal_vimax_temporal_canary | tee vimax-remotion-canary-result.txt
+          modal run -m cloud.modal_vimax_temporal_canary::app.render_vimax_temporal_canary | tee vimax-remotion-canary-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
