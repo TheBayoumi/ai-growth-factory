@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from collections import Counter
 from dataclasses import replace
 from typing import Any, Sequence
@@ -24,110 +25,39 @@ _GENERIC_FILLER_PATTERNS = (
     re.compile(r"\bkey step in expanding .* capabilities\b", re.IGNORECASE),
     re.compile(r"\bsignificant step in global .* development\b", re.IGNORECASE),
 )
+_EDITORIAL_CONTRACT = """
+FINAL HUMAN-EDITORIAL SPOKEN COPY CONTRACT (takes precedence over generic filler):
+- Write only audience-facing spoken narration. Never describe sourcing, attribution mechanics, report evaluation, or internal evidence handling.
+- Forbidden spoken boilerplate includes 'separate primary-source context', 'each report is evaluated independently', and 'supports only its attributed claim'.
+- Replace generic phrases such as 'broader trend', 'wide range of applications', and 'key step in expanding capabilities' with concrete facts already present in the supplied source title/summary.
+- Do not invent a new fact merely to reach the word target. If the supplied evidence cannot support 130-134 useful spoken words, return skip_reason.
+- The first sentence must identify the actual release actor supported by the source, not merely the hosting publisher.
+- Scene bodies must use the same supported actor attribution as the narration.
+""".strip()
 
-# Five acts, four shots each. Every direction is intentionally one simple physical action in one
-# continuous photograph so SDXL is not encouraged to solve an editing problem inside one frame.
+# Five acts, four shots each. Every direction is one simple physical action in one continuous
+# photograph, so image generation never has to solve an editing/collage problem inside one frame.
 _AI_INFRA_SHOTS: tuple[tuple[str, str, str], ...] = (
-    (
-        "establish_exterior",
-        "single continuous documentary photograph of one modern unbranded data-center building at dusk, one service vehicle approaching the entrance, realistic industrial scale, no inset images, no collage",
-        "Slow forward track toward the single facility entrance while the service vehicle continues moving.",
-    ),
-    (
-        "logistics",
-        "single continuous documentary photograph inside one industrial loading bay, one technician pushing one tall unbranded server cabinet on a wheeled dolly toward an open data-hall doorway, no collage",
-        "Controlled lateral track following the technician and server cabinet through the loading bay.",
-    ),
-    (
-        "commissioning",
-        "single continuous documentary photograph of one technician connecting one heavy cable to the rear of an open compute rack in a real data hall, hands and connector clearly visible, no collage",
-        "Gentle push toward the connector while the technician completes the physical cable connection.",
-    ),
-    (
-        "hall_scale",
-        "single continuous wide documentary photograph down one active high-density compute hall, one technician walking through the aisle for scale, cooling and power infrastructure visible, no collage",
-        "Slow pull back through the aisle while the technician continues walking between the rack rows.",
-    ),
-    (
-        "server_hardware",
-        "single continuous close documentary photograph of one technician sliding one dense server tray into an open unbranded rack, realistic hands and hardware, no collage",
-        "Tight controlled push as the technician slides and seats the server tray into the rack.",
-    ),
-    (
-        "network_fiber",
-        "single continuous close documentary photograph of one network engineer connecting one bundle of fiber cables to an unbranded switch above active compute nodes, no readable labels, no collage",
-        "Slow lateral move following the engineer's hands across the fiber connections.",
-    ),
-    (
-        "cooling",
-        "single continuous close documentary photograph of one technician inspecting a liquid-cooling manifold and coolant hoses beside one compute rack, realistic fittings and tools, no collage",
-        "Controlled close track across the cooling manifold while the technician adjusts one fitting.",
-    ),
-    (
-        "power",
-        "single continuous documentary photograph of one electrician securing one heavy power connection between an overhead busway and a rack power module, realistic protective equipment, no collage",
-        "Slow diagonal move from the busway toward the rack while the electrician secures the connection.",
-    ),
-    (
-        "commissioning_check",
-        "single continuous documentary photograph of one infrastructure engineer checking one newly commissioned rack with a small unlabelled handheld meter, active data hall behind, no collage",
-        "Gentle push toward the engineer as the meter is moved from one physical connection to the next.",
-    ),
-    (
-        "facility_walkthrough",
-        "single continuous documentary photograph of one infrastructure engineer walking beside one visiting technical colleague through an active data hall, candid movement, no handshake, no collage",
-        "Controlled tracking move alongside the two technical colleagues as they walk past active racks.",
-    ),
-    (
-        "operations",
-        "single continuous documentary photograph of one operations engineer at a physical test bench beside the data hall connecting one unbranded application device to compute infrastructure, no readable interface, no collage",
-        "Slow push from the application device toward the engineer while the physical connection is completed.",
-    ),
-    (
-        "maintenance",
-        "single continuous documentary photograph of one technician replacing one removable fan module on an operating rack, tool and module clearly visible, realistic anatomy, no collage",
-        "Tight track following the fan module as the technician removes and replaces it.",
-    ),
-    (
-        "capacity_delivery",
-        "single continuous documentary photograph of one new unbranded server cabinet being rolled beside an already active rack row by one technician, obvious capacity expansion, no collage",
-        "Controlled lateral track following the new cabinet toward the active rack row.",
-    ),
-    (
-        "cable_infrastructure",
-        "single continuous documentary photograph of one technician routing one fiber bundle into an overhead cable tray above a compute row, ladder stable and environment coherent, no collage",
-        "Gentle upward track following the fiber bundle from the rack toward the overhead tray.",
-    ),
-    (
-        "facility_support",
-        "single continuous exterior documentary photograph beside one operating data-center building, one technician inspecting a large cooling module and electrical enclosure, no signs, no collage",
-        "Slow exterior track past the cooling module while the technician continues the inspection.",
-    ),
-    (
-        "local_engineering",
-        "single continuous documentary photograph in one technical training room, two engineers handling one removable compute module on a clean workbench, real equipment only, no robots, no collage",
-        "Gentle arc around the workbench while the two engineers inspect and reposition the compute module.",
-    ),
-    (
-        "developer_workflow",
-        "single continuous documentary photograph of one developer at an unbranded workstation physically connected to a nearby compact compute rack, abstract unreadable display shapes only, no collage",
-        "Slow push from the workstation connection toward the compact serving rack as the developer works.",
-    ),
-    (
-        "application_test",
-        "single continuous documentary photograph of one engineer testing one small unbranded edge device on a physical electronics fixture beside compact compute hardware, no robot, no collage",
-        "Controlled track from the edge device to the engineer's hands as the physical test progresses.",
-    ),
-    (
-        "team_validation",
-        "single continuous documentary photograph of two engineers validating one physical prototype device on a workbench with a compact compute rack behind them, no readable screens, no collage",
-        "Gentle push toward the prototype while the engineers manipulate the device and observe the result.",
-    ),
-    (
-        "hero_hall",
-        "single continuous cinematic documentary photograph of one large active compute hall with rack rows, cooling and power infrastructure, two engineers walking through the foreground, no collage",
-        "Slow cinematic pull back through the active hall while the two engineers continue walking.",
-    ),
+    ("establish_exterior", "single continuous documentary photograph of one modern unbranded data-center building at dusk, one service vehicle approaching the entrance, realistic industrial scale", "Slow forward track toward the single facility entrance while the service vehicle continues moving."),
+    ("logistics", "single continuous documentary photograph inside one industrial loading bay, one technician pushing one tall unbranded server cabinet on a wheeled dolly toward an open data-hall doorway", "Controlled lateral track following the technician and server cabinet through the loading bay."),
+    ("commissioning", "single continuous documentary photograph of one technician connecting one heavy cable to the rear of an open compute rack in a real data hall, hands and connector clearly visible", "Gentle push toward the connector while the technician completes the physical cable connection."),
+    ("hall_scale", "single continuous wide documentary photograph down one active high-density compute hall, one technician walking through the aisle for scale, cooling and power infrastructure visible", "Slow pull back through the aisle while the technician continues walking between the rack rows."),
+    ("server_hardware", "single continuous close documentary photograph of one technician sliding one dense server tray into an open unbranded rack, realistic hands and hardware", "Tight controlled push as the technician slides and seats the server tray into the rack."),
+    ("network_fiber", "single continuous close documentary photograph of one network engineer connecting one bundle of fiber cables to an unbranded switch above active compute nodes", "Slow lateral move following the engineer's hands across the fiber connections."),
+    ("cooling", "single continuous close documentary photograph of one technician inspecting a liquid-cooling manifold and coolant hoses beside one compute rack, realistic fittings and tools", "Controlled close track across the cooling manifold while the technician adjusts one fitting."),
+    ("power", "single continuous documentary photograph of one electrician securing one heavy power connection between an overhead busway and a rack power module, realistic protective equipment", "Slow diagonal move from the busway toward the rack while the electrician secures the connection."),
+    ("commissioning_check", "single continuous documentary photograph of one infrastructure engineer checking one newly commissioned rack with a small unlabelled handheld meter, active data hall behind", "Gentle push toward the engineer as the meter is moved from one physical connection to the next."),
+    ("facility_walkthrough", "single continuous documentary photograph of one infrastructure engineer walking beside one visiting technical colleague through an active data hall, candid movement", "Controlled tracking move alongside the two technical colleagues as they walk past active racks."),
+    ("operations", "single continuous documentary photograph of one operations engineer at a physical test bench beside the data hall connecting one unbranded application device to compute infrastructure", "Slow push from the application device toward the engineer while the physical connection is completed."),
+    ("maintenance", "single continuous documentary photograph of one technician replacing one removable fan module on an operating rack, tool and module clearly visible, realistic anatomy", "Tight track following the fan module as the technician removes and replaces it."),
+    ("capacity_delivery", "single continuous documentary photograph of one new unbranded server cabinet being rolled beside an already active rack row by one technician, obvious capacity expansion", "Controlled lateral track following the new cabinet toward the active rack row."),
+    ("cable_infrastructure", "single continuous documentary photograph of one technician routing one fiber bundle into an overhead cable tray above a compute row, ladder stable and environment coherent", "Gentle upward track following the fiber bundle from the rack toward the overhead tray."),
+    ("facility_support", "single continuous exterior documentary photograph beside one operating data-center building, one technician inspecting a large cooling module and electrical enclosure", "Slow exterior track past the cooling module while the technician continues the inspection."),
+    ("local_engineering", "single continuous documentary photograph in one technical training room, two engineers handling one removable compute module on a clean workbench, real technical equipment", "Gentle arc around the workbench while the two engineers inspect and reposition the compute module."),
+    ("developer_workflow", "single continuous documentary photograph of one developer at an unbranded workstation physically connected to a nearby compact compute rack, abstract display shapes", "Slow push from the workstation connection toward the compact serving rack as the developer works."),
+    ("application_test", "single continuous documentary photograph of one engineer testing one small unbranded edge device on a physical electronics fixture beside compact compute hardware", "Controlled track from the edge device to the engineer's hands as the physical test progresses."),
+    ("team_validation", "single continuous documentary photograph of two engineers validating one physical prototype device on a workbench with a compact compute rack behind them", "Gentle push toward the prototype while the engineers manipulate the device and observe the result."),
+    ("hero_hall", "single continuous cinematic documentary photograph of one large active compute hall with rack rows, cooling and power infrastructure, two engineers walking through the foreground", "Slow cinematic pull back through the active hall while the two engineers continue walking."),
 )
 
 
@@ -142,14 +72,11 @@ def _clean(value: object) -> str:
 def consumer_editorial_failures_v66(package: VideoPackage) -> tuple[str, ...]:
     narration = _clean(package.narration)
     failures: list[str] = []
-    internal = [pattern.pattern for pattern in _INTERNAL_PROVENANCE_PATTERNS if pattern.search(narration)]
-    if internal:
+    if any(pattern.search(narration) for pattern in _INTERNAL_PROVENANCE_PATTERNS):
         failures.append("spoken narration contains internal source/provenance process language")
-    generic_hits = [pattern.pattern for pattern in _GENERIC_FILLER_PATTERNS if pattern.search(narration)]
-    if len(generic_hits) >= 2:
-        failures.append(
-            f"spoken narration contains {len(generic_hits)} generic filler claims instead of concrete supplied evidence"
-        )
+    generic_hits = sum(bool(pattern.search(narration)) for pattern in _GENERIC_FILLER_PATTERNS)
+    if generic_hits >= 2:
+        failures.append(f"spoken narration contains {generic_hits} generic filler claims instead of concrete supplied evidence")
     return tuple(failures)
 
 
@@ -167,41 +94,58 @@ def _repair_scene_actor(package: VideoPackage, sources: Sequence[SourceItem]) ->
         if source is None:
             scenes.append(scene)
             continue
-        heading = _replace_host_actor_with_title_actor(scene.heading, source)
-        body = _replace_host_actor_with_title_actor(scene.body, source)
-        updated = replace(scene, heading=heading, body=body)
+        updated = replace(
+            scene,
+            heading=_replace_host_actor_with_title_actor(scene.heading, source),
+            body=_replace_host_actor_with_title_actor(scene.body, source),
+        )
         changed = changed or updated != scene
         scenes.append(updated)
     return replace(package, scenes=scenes) if changed else package
 
 
 def _augment_repair_prompt(prompt: str) -> str:
-    return (
-        prompt
-        + "\n\nFINAL HUMAN-EDITORIAL SPOKEN COPY CONTRACT (takes precedence over generic filler):\n"
-        + "- Write only audience-facing spoken narration. Never describe sourcing, attribution mechanics, report evaluation, or internal evidence handling.\n"
-        + "- Forbidden spoken boilerplate includes 'separate primary-source context', 'each report is evaluated independently', and 'supports only its attributed claim'.\n"
-        + "- Replace generic phrases such as 'broader trend', 'wide range of applications', and 'key step in expanding capabilities' with concrete facts already present in the supplied source title/summary.\n"
-        + "- Do not invent a new fact merely to reach the word target. If the supplied evidence cannot support 130-134 useful spoken words, return skip_reason.\n"
-        + "- The first sentence must identify the actual release actor supported by the source, not merely the hosting publisher.\n"
-        + "- Scene bodies must use the same supported actor attribution as the narration.\n"
+    return prompt + "\n\n" + _EDITORIAL_CONTRACT
+
+
+def _is_package_prompt(prompt: str) -> bool:
+    return "SOURCE ENTRIES:" in prompt and (
+        "Return one JSON object containing:" in prompt
+        or "PREVIOUS JSON:" in prompt
+        or "NARRATION REPAIR:" in prompt
     )
 
 
-def _install_consumer_copy_gate() -> None:
+def _validate_final_package(package: VideoPackage, sources: Sequence[SourceItem]) -> VideoPackage:
     from . import local_llm
 
+    package = _repair_scene_actor(package, sources)
+    failures = consumer_editorial_failures_v66(package)
+    if failures:
+        raise local_llm.LocalLLMError("Human editorial copy gate failed: " + "; ".join(failures))
+    return package
+
+
+def _install_consumer_copy_gate() -> None:
+    from . import local_llm, source_attributed_llm
+
+    current_chat = local_llm._chat
     current_package_from_raw = local_llm._package_from_raw
     current_repair_prompt = local_llm._repair_prompt
+    current_source_generate = source_attributed_llm.generate_package
+
+    if not getattr(current_chat, "_agf_v66", False):
+        def chat_v66(settings: Any, prompt: str) -> dict[str, Any]:
+            if _is_package_prompt(prompt) and _EDITORIAL_CONTRACT not in prompt:
+                prompt = prompt + "\n\n" + _EDITORIAL_CONTRACT
+            return current_chat(settings, prompt)
+
+        chat_v66._agf_v66 = True  # type: ignore[attr-defined]
+        local_llm._chat = chat_v66
 
     if not getattr(current_package_from_raw, "_agf_v66", False):
         def package_from_raw_v66(settings: Any, sources: list[SourceItem], raw: dict[str, Any]) -> VideoPackage:
-            package = current_package_from_raw(settings, sources, raw)
-            package = _repair_scene_actor(package, sources)
-            failures = consumer_editorial_failures_v66(package)
-            if failures:
-                raise local_llm.LocalLLMError("Human editorial copy gate failed: " + "; ".join(failures))
-            return package
+            return _validate_final_package(current_package_from_raw(settings, sources, raw), sources)
 
         package_from_raw_v66._agf_v66 = True  # type: ignore[attr-defined]
         local_llm._package_from_raw = package_from_raw_v66
@@ -213,10 +157,19 @@ def _install_consumer_copy_gate() -> None:
         repair_prompt_v66._agf_v66 = True  # type: ignore[attr-defined]
         local_llm._repair_prompt = repair_prompt_v66
 
+    if not getattr(current_source_generate, "_agf_v66", False):
+        def source_generate_v66(settings: Any, sources: list[SourceItem], strategy: Any) -> VideoPackage:
+            return _validate_final_package(current_source_generate(settings, sources, strategy), sources)
+
+        source_generate_v66._agf_v66 = True  # type: ignore[attr-defined]
+        source_attributed_llm.generate_package = source_generate_v66
+        canary_module = sys.modules.get("factory.canary")
+        if canary_module is not None:
+            setattr(canary_module, "generate_package", source_generate_v66)
+
 
 def _is_ai_infrastructure(package: Any) -> bool:
     from .production_vimax_infrastructure_grammar_v62 import is_ai_infrastructure_story_v62
-
     return bool(is_ai_infrastructure_story_v62(package))
 
 
@@ -239,8 +192,7 @@ def apply_human_editorial_storyboard_v66(plan: Any, package: Any) -> Any:
         package_scene = package_scenes[beat]
         claim = _clean(package_scene.body) or _clean(package_scene.heading)
         prompt = (
-            f"[VIMAX_SHOT_INDEX={index}] "
-            f"Factual technology documentary shot synchronized to this exact spoken sentence: {claim}. "
+            f"[VIMAX_SHOT_INDEX={index}] Factual technology documentary shot synchronized to this exact spoken sentence: {claim}. "
             f"Supporting source-grounded visual direction: {direction}. "
             "Shot treatment: one primary action, natural documentary framing, single continuous photograph. "
             f"ViMax first frame: {direction}."
@@ -269,10 +221,9 @@ def visual_family_counts_v66(scenes: Sequence[Any]) -> dict[str, int]:
     if len(set(families[:4])) != 4:
         raise ValueError("v66 opening four shots must use four distinct editorial families")
     for index, (_family, direction, _motion) in enumerate(_AI_INFRA_SHOTS):
-        lowered = direction.casefold()
-        if "single continuous" not in lowered:
+        if "single continuous" not in direction.casefold():
             raise ValueError(f"v66 shot {index} is not explicitly one continuous scene")
-        if "robot" in lowered and "no robot" not in lowered:
+        if "robot" in direction.casefold():
             raise ValueError(f"v66 shot {index} introduces unsupported robotics")
     return dict(counts)
 
@@ -288,7 +239,6 @@ def _install_storyboard_authority() -> None:
 
         enrich_v66._agf_v66 = True  # type: ignore[attr-defined]
         authority_v52._enrich_from_vimax_artifact = enrich_v66
-
     convergence_v41.validate_editorial_contract_diversity_v41 = visual_family_counts_v66
 
 

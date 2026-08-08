@@ -30,12 +30,7 @@ from cloud.modal_app import (
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def render_vimax_temporal_canary() -> dict[str, object]:
-    """Validate the all-temporal ViMax -> Factory -> Remotion release path.
-
-    This stage is used only after the exact keyframes have passed the pre-Wan human gate. The
-    same package/editorial boundaries and human-approved storyboard grammar are reinstalled for
-    the full temporal run. Publishing stays disabled.
-    """
+    """Validate the all-temporal ViMax -> Factory -> Remotion release path after HITL approval."""
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
     os.environ["VIDEO_RENDER_BACKEND"] = "remotion"
@@ -46,6 +41,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "false"
     _prepare_runtime()
 
+    from factory.production_caption_scale_v67 import install_production_caption_scale_v67
     from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
     from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
     from factory.production_vimax_human_editorial_v66 import install_production_vimax_human_editorial_v66
@@ -53,6 +49,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
 
     install_production_editorial_boundary_v65()
+    install_production_caption_scale_v67()
     install_production_vimax_infrastructure_grammar_v62()
     install_production_vimax_unified_storyboard_v64()
     install_production_vimax_human_editorial_v66()
@@ -66,6 +63,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
         "render_backend": "remotion",
         "validation_gpu": "A10",
         "editorial_grammar": "human_editorial_v66",
+        "caption_geometry": "resolution_proportional_v67",
         "editorial_boundary": "post_grounding_capacity_authority_and_consumer_copy_v66",
         "human_keyframe_dossier": "keyframe-human-review-dossier.json",
         "vimax_commit": VIMAX_COMMIT,
