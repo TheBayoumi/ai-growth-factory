@@ -23,6 +23,9 @@ def install_production_runtime() -> None:
     from .production_editorial_wan_allocator_v38 import (
         install_production_editorial_wan_allocator_v38,
     )
+    from .production_human_review_handoff_v61 import (
+        install_production_human_review_handoff_v61,
+    )
     from .production_narration_integrity_v28 import install_production_narration_integrity_v28
     from .production_narration_length import install_production_narration_length_repair
     from .production_object_visuals import install_production_object_visuals
@@ -65,6 +68,9 @@ def install_production_runtime() -> None:
     )
     from .production_visual_review_json_v49 import (
         install_production_visual_review_json_v49,
+    )
+    from .production_visual_review_transport_v60 import (
+        install_production_visual_review_transport_v60,
     )
     from .production_visual_reviewer_resilience_v59 import (
         install_production_visual_reviewer_resilience_v59,
@@ -166,11 +172,12 @@ def install_production_runtime() -> None:
     # final narration-grounded compiler, reviewer target, and failed-scene retry authority.
     install_production_visual_runtime_v28()
     install_production_visual_semantic_review_v28()
-    # v49 hardens the syntax boundary. v59 sits outside that bounded reviewer-only retry loop and
-    # turns repeated serialization failure into a scene regeneration with zero alignment. It can
-    # never approve malformed reviewer output; the normal scene-attempt ceiling still fails closed.
+    # v49 keeps strict JSON parsing. v59 is a compatibility wrapper, while v60 owns the final
+    # transport boundary: malformed/truncated model serialization becomes an explicit zero-score
+    # scene retry and can never approve a frame or abort the complete production simulation.
     install_production_visual_review_json_v49()
     install_production_visual_reviewer_resilience_v59()
+    install_production_visual_review_transport_v60()
     install_production_visual_convergence_v29()
     install_production_visual_prompt_cleanup_v29()
     install_production_visual_storyboard_v30()
@@ -205,4 +212,8 @@ def install_production_runtime() -> None:
     # v58 installs after the temporal authority so it can replace the generic AI-lab physicalizer
     # with topic-aware, filmable editorial B-roll while retaining all 20 temporal shot contracts.
     install_production_vimax_editorial_grammar_v58()
+    # v61 does not simulate approval. It prepares the complete machine-verified artifact for a
+    # senior-editor HITL pass and records release_decision=blocked_pending_human_review until the
+    # actual MP4/audio have been inspected.
+    install_production_human_review_handoff_v61()
     _INSTALLED = True
