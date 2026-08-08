@@ -12,6 +12,12 @@ _INSTALLED = False
 _SCENE_HEADING_MAX_WORDS = 5
 _SCENE_BODY_MAX_WORDS = 18
 _SCENE_BODY_MAX_REPAIRABLE_WORDS = 36
+_V65_RELEASE_ACTOR_RE = re.compile(
+    r"^\s*([A-Z][A-Za-z0-9&.+-]*(?:\s+[A-Z][A-Za-z0-9&.+-]*){0,4})\s+"
+    r"(?:(?:has|have|just)\s+)?(?:announc(?:ed|es)|launch(?:ed|es)|releas(?:ed|es)|"
+    r"introduc(?:ed|es)|unveil(?:ed|s)|publish(?:ed|es)|open-sourc(?:ed|es))\b",
+    re.IGNORECASE,
+)
 
 
 def _finish_sentence(value: str) -> str:
@@ -84,20 +90,18 @@ def _selected_primary_source(package: VideoPackage, sources: Sequence[SourceItem
 
 def _source_title_release_actor(source: SourceItem) -> str:
     """Return a release actor only when the supplied source title itself states the action."""
-    from .production_content import _RELEASE_ACTOR_RE
-
-    match = _RELEASE_ACTOR_RE.search(source.title)
+    match = _V65_RELEASE_ACTOR_RE.search(source.title)
     return " ".join(match.group(1).split()) if match else ""
 
 
 def _replace_host_actor_with_title_actor(text: str, source: SourceItem) -> str:
     """Correct only the known host-as-actor error using actor text already in the source title."""
-    from .production_content import _RELEASE_ACTOR_RE, _authority_tokens
+    from .production_content import _authority_tokens
 
     title_actor = _source_title_release_actor(source)
     if not title_actor:
         return text
-    match = _RELEASE_ACTOR_RE.search(text)
+    match = _V65_RELEASE_ACTOR_RE.search(text)
     if not match:
         return text
 
@@ -110,6 +114,8 @@ def _replace_host_actor_with_title_actor(text: str, source: SourceItem) -> str:
     if not (actor_tokens & publisher_tokens):
         return text
 
+    # The source title is the evidence for the replacement. Never derive an actor from a model
+    # guess, URL, or article author when the title does not explicitly state the release action.
     start, end = match.span(1)
     return text[:start] + title_actor + text[end:]
 
