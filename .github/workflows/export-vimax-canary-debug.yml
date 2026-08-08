@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - verify/modal-gpu-editorial-v28-20260804
+      - debug/export-canary-20260808-2ffbc229
     paths:
       - ".github/workflows/export-vimax-canary-debug.yml"
 
@@ -12,13 +12,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: export-vimax-canary-debug
+  group: export-vimax-canary-debug-20260808-2ffbc229
   cancel-in-progress: true
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     environment: modal-production
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -29,29 +29,19 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
-      - name: Export exact failed canary evidence
+      - name: Export complete failed canary directory
         run: |
           set -euo pipefail
+          rm -rf canary-debug
           mkdir -p canary-debug
-          CANARY=20260807T103038Z-59a5ab3d
-          for name in \
-            canary-failure.json \
-            voice-calibration-failure.json \
-            voice-micro-clause-failure.json \
-            voice-review-manifest.json \
-            narration.wav \
-            narration-final-attempt.wav \
-            voice-review-final.wav \
-            package.json \
-            production-preflight.json; do
-            modal volume get --force ai-growth-factory-state \
-              "canaries/${CANARY}/${name}" \
-              "canary-debug/${name}" || true
-          done
-          find canary-debug -maxdepth 2 -type f -printf '%P\n' | sort
+          CANARY=20260808T023143Z-2ffbc229
+          modal volume get --force ai-growth-factory-state \
+            "canaries/${CANARY}" \
+            canary-debug
+          find canary-debug -type f -printf '%P\n' | sort
       - uses: actions/upload-artifact@v4
         with:
-          name: vimax-canary-20260807T103038Z-59a5ab3d-debug
+          name: vimax-canary-20260808T023143Z-2ffbc229-debug
           path: canary-debug
           retention-days: 14
           if-no-files-found: error
