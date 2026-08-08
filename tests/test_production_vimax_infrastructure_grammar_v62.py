@@ -8,6 +8,7 @@ from factory.production_vimax_infrastructure_grammar_v62 import (
     is_ai_infrastructure_story_v62,
 )
 from factory.production_vimax_visual_authority_v52 import compile_vimax_image_prompt_v52
+from factory.visual_prompt import SceneVisualPrompt, VisualPlan
 
 
 class ViMaxInfrastructureGrammarV62Tests(unittest.TestCase):
@@ -15,7 +16,7 @@ class ViMaxInfrastructureGrammarV62Tests(unittest.TestCase):
     def _package() -> SimpleNamespace:
         scenes = [
             SimpleNamespace(heading="AI Factory Launch", body="Firebird launches largest AI factory in CIS region in Armenia"),
-            SimpleNamespace(heading="Accelerated Compute", body="Uses NVIDIA accelerated computing and Dell infrastructure"),
+            SimpleNamespace(heading="Accelerated Compute", body="Uses NVIDIA's accelerated computing and Dell's infrastructure"),
             SimpleNamespace(heading="Regional Research", body="Aims to boost AI research and development in the region"),
             SimpleNamespace(heading="Infrastructure Scale", body="Marks a significant step in global AI infrastructure growth"),
             SimpleNamespace(heading="Collaboration", body="Focus on advancing AI technologies and fostering collaboration"),
@@ -25,17 +26,20 @@ class ViMaxInfrastructureGrammarV62Tests(unittest.TestCase):
             topic="AI Infrastructure Expansion",
             title="Firebird Launches AI Factory in Armenia",
             narration=(
-                "NVIDIA AI cloud Firebird launched a large AI factory using accelerated computing, "
+                "NVIDIA's AI cloud Firebird launched a large AI factory using accelerated computing, "
                 "dense server infrastructure, cooling, and high-performance compute capacity in Armenia."
             ),
             scenes=scenes,
         )
 
     @staticmethod
-    def _plan() -> SimpleNamespace:
+    def _plan() -> VisualPlan:
         scenes = tuple(
-            SimpleNamespace(
+            SceneVisualPrompt(
                 scene_index=index,
+                source_index=0,
+                role="hook" if index == 0 else "evidence",
+                generation_mode="wan_i2v",
                 image_prompt=(
                     f"[VIMAX_SHOT_INDEX={index}] Factual technology documentary shot. "
                     "Supporting source-grounded visual direction: generic developer at a workstation. "
@@ -43,11 +47,28 @@ class ViMaxInfrastructureGrammarV62Tests(unittest.TestCase):
                     "ViMax first frame: generic developer at a workstation."
                 ),
                 motion_prompt="static camera",
+                negative_prompt="text, logo, watermark",
                 continuity_anchor="generic",
+                caption_safe_zone="lower_20_percent_overlay_only",
+                seed=index + 100,
+                duration_seconds=2.9,
             )
             for index in range(20)
         )
-        return SimpleNamespace(prompt_version="vimax-script2video@test", scenes=scenes)
+        return VisualPlan(
+            prompt_version="vimax-script2video@test",
+            global_style="photorealistic technology documentary",
+            palette="neutral graphite and cool practical light",
+            lighting="natural technical documentary lighting",
+            continuity_bible="same unbranded facility and technical crew",
+            image_model="test-image-model",
+            video_model="test-video-model",
+            width=704,
+            height=1280,
+            fps=24,
+            director_input_sha256="a" * 64,
+            scenes=scenes,
+        )
 
     def test_current_firebird_story_is_classified_as_ai_infrastructure(self) -> None:
         self.assertTrue(is_ai_infrastructure_story_v62(self._package()))
