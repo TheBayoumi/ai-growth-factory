@@ -101,11 +101,26 @@ jobs:
         run: |
           set -o pipefail
           modal run -m cloud.modal_vimax_temporal_canary::app.render_vimax_temporal_canary | tee vimax-remotion-canary-result.txt
+      - name: Export complete canary directory from Modal
+        if: always()
+        run: |
+          set -u
+          CANARY=$(grep -Eo '[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+' vimax-remotion-canary-result.txt 2>/dev/null | tail -1 || true)
+          if [ -z "$CANARY" ]; then
+            echo "No canary id was emitted; nothing to export."
+            exit 0
+          fi
+          echo "$CANARY" > canary-id.txt
+          mkdir -p canary-artifacts
+          modal volume get --force ai-growth-factory-state "canaries/${CANARY}" canary-artifacts || true
+          find canary-artifacts -type f -printf '%P\n' | sort || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: pr157-vimax-remotion-exact-head
           path: |
             exact-head-sha.txt
+            canary-id.txt
             vimax-remotion-canary-result.txt
+            canary-artifacts
           retention-days: 14
