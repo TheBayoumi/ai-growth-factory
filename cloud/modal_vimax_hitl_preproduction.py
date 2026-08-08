@@ -31,13 +31,7 @@ from cloud.modal_app import (
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def prepare_vimax_keyframe_review() -> dict[str, object]:
-    """Run the real production stack only through machine-reviewed keyframes.
-
-    The expected successful outcome is not a rendered video. It is an immutable canary directory
-    containing the package, reviewed narration, ViMax plan, all keyframes, machine-review evidence,
-    contact sheet and human-review dossier. Wan temporal inference is deliberately not entered
-    until those exact keyframes are approved by a human editor.
-    """
+    """Run the real production stack only through machine-reviewed keyframes."""
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
     os.environ["VIDEO_RENDER_BACKEND"] = "remotion"
@@ -48,18 +42,12 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "true"
     _prepare_runtime()
 
-    # Install after the legacy runtime so ViMax planning, preflight, generation, retry and review
-    # share one exact filmable storyboard. v63 then stops the run after those keyframes exist.
-    from factory.production_keyframe_human_gate_v63 import (
-        install_production_keyframe_human_gate_v63,
-    )
-    from factory.production_vimax_infrastructure_grammar_v62 import (
-        install_production_vimax_infrastructure_grammar_v62,
-    )
-    from factory.production_vimax_unified_storyboard_v64 import (
-        install_production_vimax_unified_storyboard_v64,
-    )
+    from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
+    from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
+    from factory.production_vimax_infrastructure_grammar_v62 import install_production_vimax_infrastructure_grammar_v62
+    from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
 
+    install_production_editorial_boundary_v65()
     install_production_vimax_infrastructure_grammar_v62()
     install_production_vimax_unified_storyboard_v64()
     install_production_keyframe_human_gate_v63()
@@ -82,10 +70,9 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
             "render_backend": "remotion_after_human_keyframe_approval",
             "human_gate": "pre_wan_keyframe_review_v63",
             "editorial_grammar": "unified_vimax_storyboard_v64",
+            "editorial_boundary": "post_grounding_capacity_and_authority_v65",
             "vimax_commit": VIMAX_COMMIT,
         }
     if result.get("status") != "verified_render_canary":
         raise RuntimeError(json.dumps(result, ensure_ascii=False))
-    raise RuntimeError(
-        "HITL preproduction unexpectedly reached a final render; keyframe preview gate did not stop before Wan"
-    )
+    raise RuntimeError("HITL preproduction unexpectedly reached a final render")
