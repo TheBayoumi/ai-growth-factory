@@ -27,13 +27,22 @@ def install_production_visual_audit_v45() -> None:
     if _INSTALLED:
         return
 
-    # Runtime installs this audit adapter after the Remotion compositor. Add the backend-aware
-    # transition proof here so both the cheap animatic and final render use the same wrapper.
+    # Runtime installs this audit adapter after the Remotion compositor. v48 persists backend
+    # transition evidence. v56 carries Factory package-scene identity into the Remotion contract,
+    # and v57 audits deliberate story-beat dissolves while preserving hard cuts inside a beat.
+    from .production_remotion_editorial_transitions_v56 import (
+        install_production_remotion_editorial_transitions_v56,
+    )
+    from .production_remotion_transition_policy_v57 import (
+        install_production_remotion_transition_policy_v57,
+    )
     from .production_transition_evidence_v48 import (
         install_production_transition_evidence_v48,
     )
 
     install_production_transition_evidence_v48()
+    install_production_remotion_editorial_transitions_v56()
+    install_production_remotion_transition_policy_v57()
 
     from . import canary, pipeline
 

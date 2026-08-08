@@ -8,12 +8,33 @@ export type TransitionBoundary = {
   transition: 'opacity_crossfade';
 };
 
+const packageSceneIndex = (shot: RenderShot): number | null => {
+  const match = /(?:^|;)\s*package_scene:(\d+)\b/i.exec(shot.purpose);
+  return match ? Number.parseInt(match[1]!, 10) : null;
+};
+
+const shouldCrossfade = (outgoing: RenderShot, incoming: RenderShot): boolean => {
+  // Preserve the legacy image-exit dissolve for non-ViMax/compatibility renders.
+  if (outgoing.renderer === 'image_motion') {
+    return true;
+  }
+
+  // Real temporal clips use editorial cuts by default. A short opacity dissolve is reserved for
+  // a narrative package-scene change, where the story is intentionally moving to a new beat.
+  if (outgoing.renderer === 'video_clip' && incoming.renderer === 'video_clip') {
+    const outgoingBeat = packageSceneIndex(outgoing);
+    const incomingBeat = packageSceneIndex(incoming);
+    return outgoingBeat !== null && incomingBeat !== null && outgoingBeat !== incomingBeat;
+  }
+  return false;
+};
+
 export const transitionFramesBetween = (
   outgoing: RenderShot,
   incoming: RenderShot,
   requestedFrames: number,
 ): number => {
-  if (outgoing.renderer !== 'image_motion' || requestedFrames <= 0) {
+  if (requestedFrames <= 0 || !shouldCrossfade(outgoing, incoming)) {
     return 0;
   }
   return Math.max(
@@ -32,8 +53,6 @@ export const buildTransitionPlan = (
 ): TransitionBoundary[] => {
   const transitions: TransitionBoundary[] = [];
   for (let index = 0; index + 1 < shots.length; index += 1) {
-    // The loop condition proves both entries exist; explicit assertions preserve that fact
-    // under TypeScript's noUncheckedIndexedAccess mode.
     const outgoing = shots[index]!;
     const incoming = shots[index + 1]!;
     const frames = transitionFramesBetween(outgoing, incoming, requestedFrames);
