@@ -79,7 +79,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.number == 157
     needs: [python, renderer]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment: modal-production
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -97,10 +97,10 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
       - run: python scripts/repository_preflight.py
-      - name: Invoke exact-head ViMax + Remotion canary
+      - name: Invoke exact-head all-temporal ViMax + Remotion canary
         run: |
           set -o pipefail
-          modal run cloud/modal_app.py --vimax-remotion-canary | tee vimax-remotion-canary-result.txt
+          modal run -m cloud.modal_vimax_temporal_canary | tee vimax-remotion-canary-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
