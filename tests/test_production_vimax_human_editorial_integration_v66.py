@@ -54,15 +54,31 @@ class ProductionViMaxHumanEditorialV66IntegrationTests(unittest.TestCase):
 
         source = self._source()
         bad = self._bad_package()
-        with patch.object(source_attributed_llm, "generate_package", return_value=bad), patch.object(
+
+        # Use a plain callable rather than MagicMock. MagicMock fabricates arbitrary attributes,
+        # including `_agf_v66`, which can make idempotent installer checks falsely conclude that
+        # the production wrapper is already installed.
+        def bad_generate(_settings, _sources, _strategy):
+            return bad
+
+        def unexpected_chat(_settings, _prompt):
+            raise AssertionError("chat not expected")
+
+        def unexpected_package_parser(_settings, _sources, _raw):
+            raise AssertionError("package parser not expected")
+
+        def repair_prompt(*_args, **_kwargs):
+            return "repair"
+
+        with patch.object(source_attributed_llm, "generate_package", new=bad_generate), patch.object(
             canary,
             "generate_package",
-            source_attributed_llm.generate_package,
-        ), patch.object(local_llm, "_chat", side_effect=AssertionError("chat not expected")), patch.object(
+            new=bad_generate,
+        ), patch.object(local_llm, "_chat", new=unexpected_chat), patch.object(
             local_llm,
             "_package_from_raw",
-            side_effect=AssertionError("package parser not expected"),
-        ), patch.object(local_llm, "_repair_prompt", return_value="repair"):
+            new=unexpected_package_parser,
+        ), patch.object(local_llm, "_repair_prompt", new=repair_prompt):
             v66._install_consumer_copy_gate()
             with self.assertRaisesRegex(Exception, "Human editorial copy gate failed"):
                 canary.generate_package(SimpleNamespace(), [source], SimpleNamespace())
