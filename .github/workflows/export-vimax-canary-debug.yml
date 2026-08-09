@@ -49,12 +49,13 @@ jobs:
           CANARY=$(cat selected-canary-id.txt)
           mkdir -p recovered-canary
           modal volume get --force ai-growth-factory-state "canaries/${CANARY}" recovered-canary
-          find recovered-canary -type f -printf '%P\t%s bytes\n' | sort | tee recovered-files.txt
-          test -f recovered-canary/hitl-checkpoint.json
-          test -f recovered-canary/keyframe-human-review-dossier.json
-          test -f recovered-canary/editorial-timeline.json
-          test -d recovered-canary/visual-keyframes
-          test "$(find recovered-canary/visual-keyframes -maxdepth 1 -name 'scene-*-keyframe.png' | wc -l)" -eq 20
+          ROOT="recovered-canary/${CANARY}"
+          find "$ROOT" -type f -printf '%P\t%s bytes\n' | sort | tee recovered-files.txt
+          test -f "$ROOT/hitl-checkpoint.json"
+          test -f "$ROOT/keyframe-human-review-dossier.json"
+          test -f "$ROOT/editorial-timeline.json"
+          test -d "$ROOT/visual-keyframes"
+          test "$(find "$ROOT/visual-keyframes" -maxdepth 1 -name 'scene-*-keyframe.png' | wc -l)" -eq 20
       - uses: actions/upload-artifact@v4
         with:
           name: recovered-c39-vimax-stagea
