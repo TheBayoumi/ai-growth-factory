@@ -14,7 +14,7 @@ _INSTALLED = False
 
 
 class HumanKeyframeReviewRequired(RuntimeError):
-    """Intentional release pause after machine-reviewed keyframes and before temporal inference."""
+    """Intentional release pause after keyframe generation and before temporal inference."""
 
 
 def _enabled() -> bool:
@@ -31,6 +31,19 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _keyframe_set_sha256(scene_records: Sequence[dict[str, Any]]) -> str | None:
+    """Bind a human decision to this exact ordered keyframe set."""
+    records: list[str] = []
+    for item in scene_records:
+        digest = str(item.get("keyframe_sha256") or "").strip().lower()
+        if not digest:
+            return None
+        records.append(f"{int(item['shot_id']):04d}:{digest}")
+    if not records:
+        return None
+    return hashlib.sha256("\n".join(records).encode("utf-8")).hexdigest()
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -77,7 +90,12 @@ def build_keyframe_human_review_dossier_v63(
     assets: Sequence[Any] | None = None,
     machine_error: str = "",
 ) -> dict[str, Any]:
-    """Prepare the exact storyboard/keyframes for a senior-editor decision before Wan spend."""
+    """Prepare the exact storyboard/keyframes for a senior-editor decision before Wan spend.
+
+    Complete keyframe sets remain reviewable even when the semantic model recommends rejection.
+    Structural/incomplete evidence remains fail-closed. This keeps machine review useful without
+    allowing model uncertainty to bypass the mandatory human editorial arbitration stage.
+    """
     output_dir = Path(output_dir)
     paths = _keyframe_paths(output_dir)
     manifest = _read_json(output_dir / "keyframe-manifest.json")
@@ -124,15 +142,25 @@ def build_keyframe_human_review_dossier_v63(
 
     all_present = bool(scene_records) and all(item["keyframe_sha256"] for item in scene_records)
     machine_passed = not machine_error and all_present
-    status = "awaiting_human_keyframe_review" if machine_passed else "blocked_machine_keyframe_review"
+    if not all_present:
+        status = "blocked_machine_keyframe_review"
+        disposition = "blocked_incomplete_evidence"
+    elif machine_error:
+        status = "awaiting_human_keyframe_review"
+        disposition = "advisory_human_arbitration"
+    else:
+        status = "awaiting_human_keyframe_review"
+        disposition = "passed"
     return {
         "schema_version": "human-keyframe-review-v63",
         "status": status,
         "release_decision": "blocked_pending_human_keyframe_review",
         "machine_keyframe_review_passed": machine_passed,
+        "machine_review_disposition": disposition,
         "machine_error": machine_error or None,
         "expected_shots": len(plan_scenes),
         "realized_keyframes": sum(item["keyframe_sha256"] is not None for item in scene_records),
+        "keyframe_set_sha256": _keyframe_set_sha256(scene_records),
         "contact_sheet": "keyframe-contact-sheet.jpg" if paths else None,
         "keyframe_manifest": "keyframe-manifest.json" if manifest else None,
         "human_review_required": True,
@@ -166,8 +194,20 @@ def _write_dossier(plan: Any, output_dir: Path, *, assets: Sequence[Any] | None 
     return path
 
 
+def _reviewable_visual_failure(exc: Exception, dossier: dict[str, Any]) -> bool:
+    """Route only complete semantic/visual review failures to human arbitration."""
+    return (
+        type(exc).__name__ == "VisualQualityError"
+        and dossier.get("status") == "awaiting_human_keyframe_review"
+        and dossier.get("machine_review_disposition") == "advisory_human_arbitration"
+        and int(dossier.get("expected_shots") or 0) > 0
+        and int(dossier.get("realized_keyframes") or 0) == int(dossier.get("expected_shots") or 0)
+        and bool(dossier.get("keyframe_set_sha256"))
+    )
+
+
 def install_production_keyframe_human_gate_v63() -> None:
-    """Pause the ViMax canary after approved keyframes, before any Wan clip generation."""
+    """Pause the ViMax canary after complete keyframes, before any Wan clip generation."""
     global _INSTALLED
     if _INSTALLED or not _enabled():
         return
@@ -182,13 +222,21 @@ def install_production_keyframe_human_gate_v63() -> None:
             try:
                 assets = current_generate(plan, output_dir)
             except Exception as exc:
-                _write_dossier(plan, output_dir, machine_error=str(exc))
+                dossier_path = _write_dossier(plan, output_dir, machine_error=str(exc))
+                dossier = _read_json(dossier_path)
+                if _preview_only() and _reviewable_visual_failure(exc, dossier):
+                    raise HumanKeyframeReviewRequired(
+                        "Complete ViMax keyframes are ready for mandatory human arbitration before temporal generation; "
+                        "the machine semantic reviewer recommends rejection but does not own the editorial release decision; "
+                        f"dossier={dossier_path.name}; keyframe_set_sha256={dossier['keyframe_set_sha256']}"
+                    ) from exc
                 raise
-            dossier = _write_dossier(plan, output_dir, assets=assets)
+            dossier_path = _write_dossier(plan, output_dir, assets=assets)
             if _preview_only():
+                dossier = _read_json(dossier_path)
                 raise HumanKeyframeReviewRequired(
                     "Machine-reviewed ViMax keyframes are ready for mandatory human review before temporal generation; "
-                    f"dossier={dossier.name}"
+                    f"dossier={dossier_path.name}; keyframe_set_sha256={dossier.get('keyframe_set_sha256')}"
                 )
             return assets
 

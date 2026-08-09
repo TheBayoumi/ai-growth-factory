@@ -110,6 +110,29 @@ class ViMaxInfrastructureGrammarV62Tests(unittest.TestCase):
         )
         self.assertFalse(is_ai_infrastructure_story_v62(package))
 
+    def test_downstream_data_center_visual_hint_does_not_reclassify_ai_adoption_story(self) -> None:
+        package = SimpleNamespace(
+            topic="AI adoption in tax advisory",
+            title="HSP GRUPPE adopts AI for tax advisory",
+            narration=(
+                "HSP GRUPPE integrated ChatGPT Enterprise to improve advisory productivity, client service, "
+                "continuous learning, and governed professional workflows."
+            ),
+            scenes=[
+                SimpleNamespace(
+                    heading="Security Focus",
+                    body="AI use is governed by strict data protection and confidentiality policies.",
+                    visual="A secure data center with security protocols in place",
+                ),
+                SimpleNamespace(
+                    heading="Weekly Use",
+                    body="Employees use ChatGPT weekly for legal research and financial analysis.",
+                    visual="developer workstation",
+                ),
+            ],
+        )
+        self.assertFalse(is_ai_infrastructure_story_v62(package))
+
 
 if __name__ == "__main__":
     unittest.main()

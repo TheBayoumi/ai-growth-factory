@@ -18,16 +18,26 @@ def _clean(value: object) -> str:
     return _SPACE_RE.sub(" ", str(value or "")).strip(" ,.;:")
 
 
-def is_ai_infrastructure_story_v62(package: Any) -> bool:
-    corpus = " ".join(
+def _infrastructure_classification_corpus(package: Any) -> str:
+    """Return only source/editorial story text that can establish the story type.
+
+    Scene ``visual`` fields are intentionally excluded. They are downstream visual suggestions,
+    not source evidence, and a single generic suggestion such as ``secure data center`` must not
+    relabel an AI-adoption/software story as physical infrastructure.
+    """
+    return " ".join(
         [
             str(getattr(package, "topic", "")),
             str(getattr(package, "title", "")),
             str(getattr(package, "narration", "")),
+            *(str(getattr(scene, "heading", "")) for scene in getattr(package, "scenes", ()) or ()),
             *(str(getattr(scene, "body", "")) for scene in getattr(package, "scenes", ()) or ()),
-            *(str(getattr(scene, "visual", "")) for scene in getattr(package, "scenes", ()) or ()),
         ]
     ).casefold()
+
+
+def is_ai_infrastructure_story_v62(package: Any) -> bool:
+    corpus = _infrastructure_classification_corpus(package)
     strong = (
         "ai factory",
         "ai infrastructure",
@@ -40,8 +50,17 @@ def is_ai_infrastructure_story_v62(package: Any) -> bool:
         "compute rack",
         "high-performance ai infrastructure",
     )
+    if any(term in corpus for term in strong):
+        return True
+
+    # Supporting terms are deliberately conservative. Generic software stories frequently use
+    # words such as ``cloud`` or ``compute``; physical infrastructure grammar is allowed only when
+    # at least three distinct infrastructure signals are present and one is a concrete facility /
+    # hardware anchor.
     supporting = ("cloud", "server", "rack", "fiber", "cooling", "compute", "infrastructure", "facility")
-    return any(term in corpus for term in strong) or sum(term in corpus for term in supporting) >= 3
+    physical_anchors = ("server", "rack", "fiber", "cooling", "infrastructure", "facility")
+    supporting_hits = {term for term in supporting if term in corpus}
+    return len(supporting_hits) >= 3 and any(term in corpus for term in physical_anchors)
 
 
 _BEAT_DIRECTIONS: tuple[tuple[str, ...], ...] = (
