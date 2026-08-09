@@ -115,7 +115,7 @@ jobs:
       - name: Invoke exact-head Gate-1 preproduction
         run: |
           set -o pipefail
-          modal run -m cloud.modal_vimax_hitl_preproduction --code-sha "$TARGET_SHA" | tee vimax-remotion-canary-result.txt
+          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review --code-sha "$TARGET_SHA" | tee vimax-remotion-canary-result.txt
       - name: Parse structured Gate-1 result
         if: always()
         run: |
