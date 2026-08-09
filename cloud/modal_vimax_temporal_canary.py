@@ -21,6 +21,53 @@ from cloud.modal_app import (
 
 @app.function(
     image=worker_image,
+    cpu=2.0,
+    memory=4096,
+    timeout=10 * 60,
+    max_containers=1,
+    retries=modal.Retries(max_retries=0),
+    volumes={STATE_DIR: state_volume},
+)
+def record_vimax_keyframe_review(
+    approved_canary_id: str = "",
+    approval_subject_sha256: str = "",
+    approved_code_sha: str = "",
+    reviewer_kind: str = "human_simulation",
+    verdict: str = "",
+    reviewed_shots: str = "",
+    notes: str = "",
+) -> dict[str, object]:
+    """Persist an explicit HITL verdict before any temporal model can run."""
+    _prepare_runtime()
+    from factory.production_hitl_checkpoint_v71 import record_hitl_decision_v71
+
+    clean_id = str(approved_canary_id or "").strip()
+    checkpoint = Path(STATE_DIR) / "canaries" / Path(clean_id).name
+    if checkpoint.name != clean_id or not checkpoint.is_dir():
+        raise ValueError("approved canary ID is missing or unsafe")
+    try:
+        shot_ids = tuple(
+            int(value.strip())
+            for value in str(reviewed_shots or "").split(",")
+            if value.strip()
+        )
+    except ValueError as exc:
+        raise ValueError("reviewed_shots must be a comma-separated list of integer shot IDs") from exc
+    decision = record_hitl_decision_v71(
+        checkpoint,
+        approval_subject_sha256=approval_subject_sha256,
+        code_sha=approved_code_sha,
+        reviewer_kind=reviewer_kind,
+        verdict=verdict,
+        reviewed_shot_ids=shot_ids,
+        notes=tuple(value.strip() for value in str(notes or "").split("||") if value.strip()),
+    )
+    state_volume.commit()
+    return decision
+
+
+@app.function(
+    image=worker_image,
     gpu="A10",
     cpu=8.0,
     memory=65536,

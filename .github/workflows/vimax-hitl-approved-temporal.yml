@@ -34,13 +34,30 @@ jobs:
           import json
           from pathlib import Path
           payload = json.loads(Path('.github/verification/hitl-approval.json').read_text())
+          import base64
           for field in ('code_sha', 'canary_id', 'approval_subject_sha256'):
               value = str(payload.get(field) or '').strip()
               if not value:
                   raise SystemExit(f'missing approval field: {field}')
               print(f'{field}={value}')
-          if str(payload.get('verdict') or '').strip().lower() != 'approve':
+          verdict = str(payload.get('verdict') or '').strip().lower()
+          if verdict != 'approve':
               raise SystemExit('HITL approval verdict must be approve')
+          reviewer_kind = str(payload.get('reviewer_kind') or '').strip().lower()
+          if reviewer_kind not in {'human', 'human_simulation'}:
+              raise SystemExit('reviewer_kind must be human or human_simulation')
+          shots = payload.get('reviewed_shot_ids')
+          if not isinstance(shots, list) or not shots:
+              raise SystemExit('reviewed_shot_ids must be a non-empty list')
+          if any(not isinstance(value, int) or value < 0 for value in shots):
+              raise SystemExit('reviewed_shot_ids must contain non-negative integers')
+          print(f'reviewer_kind={reviewer_kind}')
+          print('reviewed_shots=' + ','.join(str(value) for value in shots))
+          notes = payload.get('notes') or []
+          if not isinstance(notes, list):
+              raise SystemExit('notes must be a list')
+          encoded = base64.b64encode('||'.join(str(value) for value in notes).encode()).decode()
+          print(f'notes_b64={encoded}')
           PY
       - name: Require approval for current PR head
         env:
@@ -64,6 +81,25 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
       - run: python scripts/repository_preflight.py
+      - name: Persist explicit HITL decision
+        env:
+          CODE_SHA: ${{ steps.approval.outputs.code_sha }}
+          CANARY_ID: ${{ steps.approval.outputs.canary_id }}
+          APPROVAL_SHA: ${{ steps.approval.outputs.approval_subject_sha256 }}
+          REVIEWER_KIND: ${{ steps.approval.outputs.reviewer_kind }}
+          REVIEWED_SHOTS: ${{ steps.approval.outputs.reviewed_shots }}
+          NOTES_B64: ${{ steps.approval.outputs.notes_b64 }}
+        run: |
+          NOTES=$(printf '%s' "$NOTES_B64" | base64 -d)
+          modal run -m cloud.modal_vimax_temporal_canary::app.record_vimax_keyframe_review \
+            --approved-canary-id "$CANARY_ID" \
+            --approval-subject-sha256 "$APPROVAL_SHA" \
+            --approved-code-sha "$CODE_SHA" \
+            --reviewer-kind "$REVIEWER_KIND" \
+            --verdict approve \
+            --reviewed-shots "$REVIEWED_SHOTS" \
+            --notes "$NOTES" \
+            | tee vimax-hitl-decision-result.txt
       - name: Resume approved checkpoint through Wan and Remotion
         env:
           CODE_SHA: ${{ steps.approval.outputs.code_sha }}
@@ -78,6 +114,8 @@ jobs:
             | tee vimax-approved-temporal-result.txt
           if grep -q 'awaiting_human_final_review' vimax-approved-temporal-result.txt; then
             echo 'Rendered MP4 is ready. Release remains blocked pending final human video/audio review.'
+          else
+            echo 'Temporal canary did not reach the final human-review gate.' >&2
             exit 1
           fi
       - name: Export complete final-review canary directory
@@ -99,6 +137,7 @@ jobs:
           name: vimax-hitl-approved-temporal
           path: |
             final-canary-id.txt
+            vimax-hitl-decision-result.txt
             vimax-approved-temporal-result.txt
             final-canary-artifacts
           retention-days: 14

@@ -248,8 +248,11 @@ def install_production_keyframe_human_gate_v63() -> None:
         def copy_visual_audit_v63(workdir: Path, destination: Path) -> None:
             current_copy(workdir, destination)
             visual_root = Path(workdir) / "visual-assets"
-            for name in ("keyframe-human-review-dossier.json", "keyframe-contact-sheet.jpg"):
-                source = visual_root / name
+            for source, name in (
+                (visual_root / "keyframe-human-review-dossier.json", "keyframe-human-review-dossier.json"),
+                (visual_root / "keyframe-contact-sheet.jpg", "keyframe-contact-sheet.jpg"),
+                (visual_root / "editorial-timeline.json", "editorial-timeline.json"),
+            ):
                 if source.is_file():
                     shutil.copy2(source, Path(destination) / name)
 
