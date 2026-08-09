@@ -100,7 +100,7 @@ jobs:
       - name: Prepare exact-head ViMax keyframes for human review
         run: |
           set -o pipefail
-          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review | tee vimax-remotion-canary-result.txt
+          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review --code-sha "$TARGET_SHA" | tee vimax-remotion-canary-result.txt
           if grep -q 'awaiting_human_keyframe_review' vimax-remotion-canary-result.txt; then
             echo 'Machine-reviewed keyframes are ready. Release remains blocked pending human editorial review.'
             exit 1
