@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .feeds import fetch_diverse_recent, fetch_recent
+from .feeds import fetch_diverse_recent, fetch_recent, hydrate_source_summaries
 from .llm_runtime import managed_llama_server
 from .policy import reward, select_strategy
+from .production_editorial_v28 import validate_static_editorial_preflight
 from .source_attributed_llm import generate_package
 from .trend_ranking import TrendAlignment, align_primary_sources_to_trends
 from .trend_sources import TrendSnapshot, fetch_trend_snapshot
@@ -70,6 +71,13 @@ def _persist_visual_audit(settings: Settings, workdir: Path) -> Path:
         keyframe_destination.mkdir(parents=True, exist_ok=True)
         for source in sorted(keyframes.glob("*.png")):
             shutil.copy2(source, keyframe_destination / source.name)
+    preflight = visual_root / "preflight"
+    if preflight.is_dir():
+        shutil.copytree(
+            preflight,
+            destination / "preflight",
+            dirs_exist_ok=True,
+        )
     return destination
 
 
@@ -128,18 +136,52 @@ def run_factory(settings: Settings) -> dict[str, Any]:
         max_age_hours=min(settings.max_source_age_hours, 72),
     )
     trend_alignment = align_primary_sources_to_trends(selection.items, trend_snapshot)
-    sources = list(trend_alignment.ranked_sources or selection.items)
+    sources = hydrate_source_summaries(
+        trend_alignment.ranked_sources or selection.items,
+    )
     trend_audit = _persist_trend_audit(settings, trend_snapshot, trend_alignment)
 
     seed_material = f"{today}|{context.channel_id}|{len(mature)}"
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     strategy = select_strategy(observations, seed)
     settings.work_root.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix="run-", dir=settings.work_root))
     research_workdir = Path(tempfile.mkdtemp(prefix="research-", dir=settings.work_root))
     try:
         with managed_llama_server(settings, research_workdir):
             package = generate_package(settings, sources, strategy)
-            visual_plan = construct_visual_plan(settings, package, sources, strategy)
+            preflight_attempt = 0
+
+            def validate_plan(plan: Any) -> None:
+                nonlocal preflight_attempt
+                preflight_attempt += 1
+                validate_static_editorial_preflight(
+                    settings=settings,
+                    plan=plan,
+                    package=package,
+                    workdir=workdir,
+                    attempt=preflight_attempt,
+                )
+
+            visual_plan = construct_visual_plan(
+                settings,
+                package,
+                sources,
+                strategy,
+                plan_validator=validate_plan,
+            )
+    except Exception as exc:
+        failure = {
+            "status": "failed_closed",
+            "stage": "static_preflight_before_tts",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "workdir": str(workdir),
+            "trend_audit": str(trend_audit),
+        }
+        record = _persist_run_record(settings, failure)
+        failure["run_record"] = str(record)
+        raise RuntimeError(json.dumps(failure, ensure_ascii=False)) from exc
     finally:
         shutil.rmtree(research_workdir, ignore_errors=True)
     if len(set(package.source_publishers)) < settings.min_primary_sources:
@@ -150,9 +192,9 @@ def run_factory(settings: Settings) -> dict[str, Any]:
             "trend_audit": str(trend_audit),
         }
         _persist_run_record(settings, result)
+        shutil.rmtree(workdir, ignore_errors=True)
         return result
 
-    workdir = Path(tempfile.mkdtemp(prefix="run-", dir=settings.work_root))
     succeeded = False
     try:
         voice_contract = contract_for_strategy(settings.voice_contract, strategy)

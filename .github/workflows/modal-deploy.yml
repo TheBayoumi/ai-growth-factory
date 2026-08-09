@@ -1,9 +1,6 @@
 name: Deploy Modal GPU Worker
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
   workflow_dispatch:
     inputs:
       run_private_canary:
@@ -20,9 +17,6 @@ concurrency:
 
 jobs:
   deploy:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && vars.MODAL_AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: modal-production
@@ -50,12 +44,12 @@ jobs:
       - name: Deploy scheduled T4 worker
         run: modal deploy cloud/modal_app.py
       - name: Run private canary
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_private_canary }}
+        if: ${{ inputs.run_private_canary }}
         run: |
           set -o pipefail
           modal run cloud/modal_app.py --canary | tee modal-canary-result.txt
       - name: Upload canary invocation log
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.run_private_canary }}
+        if: ${{ always() && inputs.run_private_canary }}
         uses: actions/upload-artifact@v4
         with:
           name: modal-canary-result

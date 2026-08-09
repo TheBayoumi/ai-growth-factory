@@ -4,10 +4,11 @@ import hashlib
 import html
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
+from urllib.parse import urlparse
 from xml.etree import ElementTree
 
 import requests
@@ -22,6 +23,7 @@ class SourceItem:
     published_at: datetime
     source_kind: str = "primary"
     trend_score: float = 0.0
+    author: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -30,6 +32,11 @@ class SourceItem:
     @property
     def is_primary(self) -> bool:
         return self.source_kind == "primary"
+
+    @property
+    def authority(self) -> str:
+        """Return the organization/person responsible for the article, not its host."""
+        return source_authority(self)
 
 
 @dataclass(frozen=True)
@@ -56,10 +63,98 @@ FEEDS: tuple[tuple[str, str], ...] = (
 )
 
 _TAG_RE = re.compile(r"<[^>]+>")
+_TRUSTED_ARTICLE_HOSTS = (
+    "openai.com",
+    "blog.google",
+    "anthropic.com",
+    "microsoft.com",
+    "blogs.nvidia.com",
+    "huggingface.co",
+)
+_ARTICLE_BLOCK_RE = re.compile(
+    r"<(?:article|main)\b[^>]*>(.*?)</(?:article|main)>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_NON_CONTENT_RE = re.compile(
+    r"<(script|style|svg|nav|header|footer|form|aside)\b[^>]*>.*?</\1>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
+def _humanize_namespace(value: str) -> str:
+    cleaned = re.sub(r"[_-]+", " ", value).strip()
+    cleaned = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", cleaned)
+    return " ".join(cleaned.split())
+
+
+def source_authority(source: SourceItem) -> str:
+    """Resolve authorial authority while preserving publisher as distribution metadata.
+
+    Hugging Face team articles encode the author/organization in ``/blog/<namespace>/``.
+    Treating the hosting feed as the announcing company caused the rejected LFM2.5 render.
+    """
+    parsed = urlparse(source.url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if parsed.hostname and parsed.hostname.casefold().endswith("huggingface.co"):
+        if len(parts) >= 3 and parts[0].casefold() == "blog":
+            namespace = _humanize_namespace(parts[1])
+            if namespace and namespace.casefold() not in {"hugging face", "huggingface"}:
+                return namespace
+    author = " ".join(source.author.split()).strip()
+    return author or source.publisher.strip()
 
 
 def _clean(value: str | None) -> str:
     return html.unescape(_TAG_RE.sub(" ", value or "")).replace("\n", " ").strip()
+
+
+def _trusted_article_url(url: str) -> bool:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").casefold()
+    return parsed.scheme == "https" and any(
+        hostname == allowed or hostname.endswith("." + allowed)
+        for allowed in _TRUSTED_ARTICLE_HOSTS
+    )
+
+
+def _extract_article_summary(content: bytes) -> str:
+    """Extract visible official-article evidence without adding an HTML dependency."""
+    document = content[:2_000_000].decode("utf-8", errors="replace")
+    blocks = _ARTICLE_BLOCK_RE.findall(document)
+    selected = " ".join(blocks) if blocks else document
+    selected = _NON_CONTENT_RE.sub(" ", selected)
+    return " ".join(_clean(selected).split())[:2400]
+
+
+def hydrate_source_summaries(
+    items: Iterable[SourceItem],
+    *,
+    max_items: int = 12,
+    timeout_seconds: float = 8.0,
+) -> list[SourceItem]:
+    """Hydrate weak feed summaries from trusted primary pages before the LLM runs.
+
+    Only the highest-ranked sources are fetched. A failed page remains unchanged so the
+    downstream evidence gate can reject it before TTS or GPU generation.
+    """
+    hydrated: list[SourceItem] = []
+    headers = {"User-Agent": "AIGrowthFactory/1.0 (+https://vercel.app)"}
+    for index, item in enumerate(items):
+        if (
+            index >= max_items
+            or len(item.summary.split()) >= 40
+            or not _trusted_article_url(item.url)
+        ):
+            hydrated.append(item)
+            continue
+        try:
+            response = requests.get(item.url, headers=headers, timeout=timeout_seconds)
+            response.raise_for_status()
+            summary = _extract_article_summary(response.content)
+        except Exception:
+            summary = ""
+        hydrated.append(replace(item, summary=summary) if len(summary.split()) >= 40 else item)
+    return hydrated
 
 
 def _local(tag: str) -> str:
@@ -107,9 +202,19 @@ def _parse(content: bytes, publisher: str) -> list[SourceItem]:
         title = _clean(_child_text(node, {"title"}))
         url = _link(node) or _child_text(node, {"guid", "id"})
         summary = _clean(_child_text(node, {"summary", "description", "content", "encoded"}))
+        author = _clean(_child_text(node, {"author", "creator"}))
         date_text = _child_text(node, {"published", "updated", "pubdate", "date"})
         if title and url:
-            items.append(SourceItem(publisher, title, url, summary[:1200], _date(date_text)))
+            items.append(
+                SourceItem(
+                    publisher,
+                    title,
+                    url,
+                    summary[:1200],
+                    _date(date_text),
+                    author=author[:240],
+                )
+            )
     return items
 
 

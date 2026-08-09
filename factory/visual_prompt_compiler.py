@@ -273,14 +273,14 @@ def compile_motion_prompt(
         "Subtle coherent motion only. No text, screens, new objects, cuts, zoom, shake, "
         "flicker, morphing, or anatomy changes."
     )
-    semantic = _truncate_words(_distinctive_content(semantic_context), 9) if semantic_context else ""
+    semantic = _truncate_words(_distinctive_content(semantic_context), 16) if semantic_context else ""
     role_instruction = _ROLE_MOTION.get(
         role.casefold(),
         "Animate one clear internal change without moving the camera.",
     )
     raw_motion = _truncate_words(
         _distinctive_content(_sanitize_motion_language(director_motion_prompt)),
-        10,
+        12,
     )
     fixed = len(prefix.split()) + len(suffix.split())
     content = _truncate_words(

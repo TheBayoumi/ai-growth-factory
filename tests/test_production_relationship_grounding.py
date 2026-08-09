@@ -3,26 +3,38 @@ from datetime import datetime, timezone
 
 from factory.feeds import SourceItem
 from factory.models import Scene, VideoPackage
-from factory.production_content import _validate_publishable_content
+from factory.production_content import _validate_publishable_content, _validate_source_relationships
 from factory.production_relationship_grounding import ground_unsupported_relationships
 
 
 class ProductionRelationshipGroundingTests(unittest.TestCase):
-    def test_invented_collaboration_becomes_independent_source_context(self):
+    def test_invented_collaboration_is_not_hidden_as_source_process_copy(self):
         now = datetime.now(timezone.utc)
         sources = [
             SourceItem(
                 "OpenAI",
                 "Realtime API Adds Reliable Tool Calling",
                 "https://example.com/openai",
-                "The Realtime API now supports more reliable tool calls.",
+                (
+                    "The Realtime API now supports more reliable tool calls with structured "
+                    "arguments, explicit confirmation, retry handling, permission checks, and "
+                    "observable results inside live voice conversations. Developers can evaluate "
+                    "latency, malformed requests, delayed responses, correction rates, and failure "
+                    "recovery against a concrete production interface."
+                ),
                 now,
             ),
             SourceItem(
                 "Microsoft Research",
                 "EvoLib Evaluates Automated Library Improvement",
                 "https://example.com/microsoft",
-                "EvoLib studies automated improvement of software libraries.",
+                (
+                    "EvoLib studies automated improvement of software libraries through controlled "
+                    "tasks, repeatable evaluations, measured checkpoints, and explicit regression "
+                    "tracking. The research separates proposed edits from verified outcomes and "
+                    "records failures, retries, and reproducibility evidence before claiming that "
+                    "an automated change improves a real workflow."
+                ),
                 now,
             ),
         ]
@@ -60,13 +72,11 @@ class ProductionRelationshipGroundingTests(unittest.TestCase):
         repaired = ground_unsupported_relationships(package, sources)
         lowered = f"{repaired.title} {repaired.narration}".casefold()
 
-        self.assertNotIn("collaboration between", lowered)
-        self.assertIn("separate primary-source context", repaired.narration)
-        self.assertIn("evaluated independently", repaired.narration)
-        self.assertIn("OpenAI", repaired.title)
-        self.assertGreaterEqual(len(repaired.narration.split()), 130)
-        self.assertLessEqual(len(repaired.narration.split()), 155)
-        _validate_publishable_content(repaired, sources)
+        self.assertIn("collaboration between", lowered)
+        self.assertNotIn("separate primary-source context", repaired.narration)
+        self.assertNotIn("Independent source context", " ".join(scene.heading for scene in repaired.scenes))
+        with self.assertRaisesRegex(Exception, "unsupported cross-source relationship"):
+            _validate_source_relationships(repaired, sources)
 
     def test_explicit_relationship_in_source_evidence_is_preserved(self):
         now = datetime.now(timezone.utc)

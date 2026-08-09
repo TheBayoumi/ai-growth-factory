@@ -55,6 +55,8 @@ class CanaryTests(unittest.TestCase):
         ), patch("factory.canary.generate_package", return_value=package), patch(
             "factory.canary.construct_visual_plan", return_value=visual_plan
         ) as construct_visual, patch(
+            "factory.canary.validate_static_editorial_preflight"
+        ) as static_preflight, patch(
             "factory.canary.build_reviewed_narration"
         ) as voice, patch("factory.canary.render_visual_plan") as render_visual, patch(
             "factory.canary.verify_video_output"
@@ -101,6 +103,10 @@ class CanaryTests(unittest.TestCase):
                 return SimpleNamespace(as_dict=lambda: {"passed": True})
 
             verify.side_effect = fake_verify
+            static_preflight.return_value = None
+            construct_visual.side_effect = lambda *args, **kwargs: (
+                kwargs["plan_validator"](visual_plan) or visual_plan
+            )
             output_root = base / "artifacts"
             result = run_production_canary(Settings.from_env(), output_root)
 
@@ -109,6 +115,7 @@ class CanaryTests(unittest.TestCase):
             self.assertEqual(result["visuals"]["wan_scene_count"], 3)
             self.assertFalse(result["visuals"]["captions_baked_into_generated_media"])
             construct_visual.assert_called_once()
+            static_preflight.assert_called_once()
             render_visual.assert_called_once()
             verify.assert_called_once()
             artifact_dir = output_root / result["canary_id"]

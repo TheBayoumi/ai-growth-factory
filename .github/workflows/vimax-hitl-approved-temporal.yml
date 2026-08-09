@@ -1,0 +1,143 @@
+name: Run Approved ViMax Temporal HITL
+
+on:
+  push:
+    branches:
+      - "hitl-approved/**"
+    paths:
+      - ".github/verification/hitl-approval.json"
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+concurrency:
+  group: modal-vimax-approved-temporal
+  cancel-in-progress: false
+
+jobs:
+  approved-temporal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: modal-production
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read human approval record
+        id: approval
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('.github/verification/hitl-approval.json').read_text())
+          import base64
+          for field in ('code_sha', 'canary_id', 'approval_subject_sha256'):
+              value = str(payload.get(field) or '').strip()
+              if not value:
+                  raise SystemExit(f'missing approval field: {field}')
+              print(f'{field}={value}')
+          verdict = str(payload.get('verdict') or '').strip().lower()
+          if verdict != 'approve':
+              raise SystemExit('HITL approval verdict must be approve')
+          reviewer_kind = str(payload.get('reviewer_kind') or '').strip().lower()
+          if reviewer_kind not in {'human', 'human_simulation'}:
+              raise SystemExit('reviewer_kind must be human or human_simulation')
+          shots = payload.get('reviewed_shot_ids')
+          if not isinstance(shots, list) or not shots:
+              raise SystemExit('reviewed_shot_ids must be a non-empty list')
+          if any(not isinstance(value, int) or value < 0 for value in shots):
+              raise SystemExit('reviewed_shot_ids must contain non-negative integers')
+          print(f'reviewer_kind={reviewer_kind}')
+          print('reviewed_shots=' + ','.join(str(value) for value in shots))
+          notes = payload.get('notes') or []
+          if not isinstance(notes, list):
+              raise SystemExit('notes must be a list')
+          encoded = base64.b64encode('||'.join(str(value) for value in notes).encode()).decode()
+          print(f'notes_b64={encoded}')
+          PY
+      - name: Require approval for current PR head
+        env:
+          CODE_SHA: ${{ steps.approval.outputs.code_sha }}
+        run: |
+          CURRENT=$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/157 \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["head"]["sha"])')
+          test "$CURRENT" = "$CODE_SHA"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.approval.outputs.code_sha }}
+      - name: Verify exact approved code
+        env:
+          CODE_SHA: ${{ steps.approval.outputs.code_sha }}
+        run: test "$(git rev-parse HEAD)" = "$CODE_SHA"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - run: python scripts/repository_preflight.py
+      - name: Persist explicit HITL decision
+        env:
+          CODE_SHA: ${{ steps.approval.outputs.code_sha }}
+          CANARY_ID: ${{ steps.approval.outputs.canary_id }}
+          APPROVAL_SHA: ${{ steps.approval.outputs.approval_subject_sha256 }}
+          REVIEWER_KIND: ${{ steps.approval.outputs.reviewer_kind }}
+          REVIEWED_SHOTS: ${{ steps.approval.outputs.reviewed_shots }}
+          NOTES_B64: ${{ steps.approval.outputs.notes_b64 }}
+        run: |
+          NOTES=$(printf '%s' "$NOTES_B64" | base64 -d)
+          modal run -m cloud.modal_vimax_temporal_canary::app.record_vimax_keyframe_review \
+            --approved-canary-id "$CANARY_ID" \
+            --approval-subject-sha256 "$APPROVAL_SHA" \
+            --approved-code-sha "$CODE_SHA" \
+            --reviewer-kind "$REVIEWER_KIND" \
+            --verdict approve \
+            --reviewed-shots "$REVIEWED_SHOTS" \
+            --notes "$NOTES" \
+            | tee vimax-hitl-decision-result.txt
+      - name: Resume approved checkpoint through Wan and Remotion
+        env:
+          CODE_SHA: ${{ steps.approval.outputs.code_sha }}
+          CANARY_ID: ${{ steps.approval.outputs.canary_id }}
+          APPROVAL_SHA: ${{ steps.approval.outputs.approval_subject_sha256 }}
+        run: |
+          set -o pipefail
+          modal run -m cloud.modal_vimax_temporal_canary::app.render_vimax_temporal_canary \
+            --approved-canary-id "$CANARY_ID" \
+            --approved-keyframe-sha256 "$APPROVAL_SHA" \
+            --approved-code-sha "$CODE_SHA" \
+            | tee vimax-approved-temporal-result.txt
+          if grep -q 'awaiting_human_final_review' vimax-approved-temporal-result.txt; then
+            echo 'Rendered MP4 is ready. Release remains blocked pending final human video/audio review.'
+          else
+            echo 'Temporal canary did not reach the final human-review gate.' >&2
+            exit 1
+          fi
+      - name: Export complete final-review canary directory
+        if: always()
+        run: |
+          set -u
+          CANARY=$(grep -Eo '[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+' vimax-approved-temporal-result.txt 2>/dev/null | tail -1 || true)
+          if [ -z "$CANARY" ]; then
+            echo "No final-review canary id was emitted; nothing to export."
+            exit 0
+          fi
+          echo "$CANARY" > final-canary-id.txt
+          mkdir -p final-canary-artifacts
+          modal volume get --force ai-growth-factory-state "canaries/${CANARY}" final-canary-artifacts || true
+          find final-canary-artifacts -type f -printf '%P\n' | sort || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vimax-hitl-approved-temporal
+          path: |
+            final-canary-id.txt
+            vimax-hitl-decision-result.txt
+            vimax-approved-temporal-result.txt
+            final-canary-artifacts
+          retention-days: 14

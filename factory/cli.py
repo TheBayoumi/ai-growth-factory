@@ -106,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     voice.add_argument("--no-review", action="store_true")
     args = parser.parse_args(argv)
     try:
+        # The feature-gated ViMax and Remotion adapters must be installed before execution.
+        # The installer also repairs already-imported CLI module bindings deterministically.
+        from .production_runtime import install_production_runtime
+
+        install_production_runtime()
         settings = Settings.from_env()
         if args.command == "doctor":
             result = _doctor(settings, load_voice=args.load_voice_model)

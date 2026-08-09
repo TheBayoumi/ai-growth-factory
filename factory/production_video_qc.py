@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+from dataclasses import replace
 from pathlib import Path
 from statistics import mean
 from typing import Any, Sequence
@@ -104,6 +105,35 @@ def _infer_scene_media_types(args: tuple[Any, ...], kwargs: dict[str, Any]) -> t
         return ()
 
 
+def production_motion_failures(
+    media_types: Sequence[str],
+    report: Any,
+) -> tuple[str, ...]:
+    """Evaluate useful shot motion from an existing QC report without rerendering."""
+    failures: list[str] = []
+    for index, (media_type, window_mean, near_static, jump_ratio, maximum) in enumerate(
+        zip(
+            media_types,
+            report.temporal_window_mean_differences,
+            report.temporal_window_near_static_ratios,
+            report.temporal_window_jump_ratios,
+            report.temporal_window_max_differences,
+            strict=False,
+        )
+    ):
+        if media_type == "image":
+            if window_mean < 0.08 or near_static > 0.45:
+                failures.append(f"image shot {index} is effectively static after composition")
+            if window_mean > 2.20 or (jump_ratio > 0.82 and maximum > 1.80):
+                failures.append(f"image shot {index} has excessive camera motion")
+        elif media_type == "video":
+            if window_mean < 0.12 or near_static > 0.75:
+                failures.append(f"Wan shot {index} has no meaningful visible motion")
+            if maximum > 4.50:
+                failures.append(f"Wan shot {index} has unstable frame-to-frame motion")
+    return tuple(failures)
+
+
 def verify_production_video_output(
     *args: Any,
     scene_media_types: Sequence[str] | None = None,
@@ -115,7 +145,24 @@ def verify_production_video_output(
         raise video_qc.VideoQCError(f"Unsupported scene media type sequence: {normalized}")
     token = _MEDIA_TYPES.set(normalized)
     try:
-        return _ORIGINAL_VERIFY(*args, **kwargs)
+        report = _ORIGINAL_VERIFY(*args, **kwargs)
+        failures = list(report.failures)
+        failures.extend(production_motion_failures(normalized, report))
+
+        updated = replace(
+            report,
+            passed=not failures,
+            failures=tuple(dict.fromkeys(failures)),
+        )
+        report_path = kwargs.get("report_path")
+        if report_path is not None:
+            Path(report_path).write_text(
+                json.dumps(updated.as_dict(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        if failures:
+            raise video_qc.VideoQCError("; ".join(dict.fromkeys(failures)))
+        return updated
     finally:
         _MEDIA_TYPES.reset(token)
 

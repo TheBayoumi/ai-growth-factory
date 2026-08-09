@@ -95,14 +95,18 @@ class ProductionMetadataCompletionTests(unittest.TestCase):
                 generate_package(Settings.from_env(), self.sources, self.strategy)
         self.assertEqual(chat.call_count, 3)
 
-    def test_modal_native_omni_dependencies_are_pinned(self):
+    def test_modal_quantized_omni_dependencies_are_pinned(self):
         source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
         self.assertIn('"numpy==2.2.6"', source)
         self.assertIn('"numba==0.64.0"', source)
+        self.assertIn('"bitsandbytes==0.50.0"', source)
         self.assertIn('gpu="A10"', source)
-        self.assertIn('"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-3B"', source)
-        self.assertNotIn("gptqmodel", source.lower())
-        self.assertNotIn("optimum", source.lower())
+        self.assertIn(
+            '"QWEN_OMNI_REVIEW_MODEL": "Qwen/Qwen2.5-Omni-7B"',
+            source,
+        )
+        self.assertNotIn("gptqmodel", source.casefold())
+        self.assertNotIn("optimum==", source)
 
 
 if __name__ == "__main__":

@@ -78,10 +78,9 @@ class PublisherDiversityTests(unittest.TestCase):
         self.assertIn('"source_id": 0, "publisher": "OpenAI"', prompt)
         self.assertIn('"source_id": 1, "publisher": "NVIDIA"', prompt)
         self.assertIn('"source_id": 2, "publisher": "Google AI"', prompt)
-        self.assertIn(
-            '"source_id": 3, "publisher": "OpenAI", "title": "OpenAI two"',
-            prompt,
-        )
+        self.assertIn('"source_id": 3, "publisher": "OpenAI"', prompt)
+        self.assertIn('"authority": "OpenAI", "title": "OpenAI two"', prompt)
+        self.assertIn("AUTHORSHIP CONTRACT", prompt)
 
     def test_same_publisher_package_gets_precise_repair_and_can_recover(self):
         invalid = self.package(

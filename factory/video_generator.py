@@ -55,6 +55,22 @@ def _keyframe_by_scene(keyframes: tuple[KeyframeAsset, ...]) -> dict[int, Keyfra
     return result
 
 
+def _validate_wan_media_budget(
+    plan: VisualPlan,
+    assets: Iterable[SceneMediaAsset],
+) -> tuple[int, int]:
+    """Require realized Wan clips to match the plan-derived editorial budget."""
+    expected = sum(scene.generation_mode == "wan_i2v" for scene in plan.scenes)
+    actual = sum(asset.media_type == "video" for asset in assets)
+    if expected < 1:
+        raise VideoGenerationError("Production visual plan must contain at least one Wan clip")
+    if actual != expected:
+        raise VideoGenerationError(
+            f"Production visual plan requires {expected} Wan clips; generated {actual}"
+        )
+    return expected, actual
+
+
 def _frame_to_uint8(frame: Any) -> Any:
     """Normalize PIL, NumPy, or Torch Wan frames to contiguous RGB uint8 arrays.
 
@@ -163,7 +179,7 @@ class Wan22DiffusersAnimator:
         if not 8 <= self.steps <= 60:
             raise VideoGenerationError("WAN22_SAMPLE_STEPS must be between 8 and 60")
         if not 1.0 <= self.guidance_scale <= 12.0:
-            raise VideoGenerationError("WAN22_GUIDANCE_SCALE must be between 1 and 12")
+            raise VideoGenerationError("WAN22_GUIDANCE_SCALE must be between 1.0 and 12.0")
         self._pipeline: Any = None
 
     def _load(self) -> Any:
@@ -313,8 +329,7 @@ def generate_scene_media(
             )
         )
 
-    if sum(asset.media_type == "video" for asset in assets) != 3:
-        raise VideoGenerationError("Production visual plan must contain exactly three Wan clips")
+    expected_wan_shots, realized_wan_shots = _validate_wan_media_budget(plan, assets)
 
     manifest = {
         "video_backend": "wan22_ti2v_diffusers_imageio_export",
@@ -327,6 +342,8 @@ def generate_scene_media(
         "vae_slicing": True,
         "frame_normalization": "float_or_tensor_to_contiguous_rgb_uint8",
         "image_prompt_reinjected_into_motion_prompt": False,
+        "expected_wan_shots": expected_wan_shots,
+        "realized_wan_shots": realized_wan_shots,
         "assets": [asset.as_dict() for asset in assets],
     }
     (output_dir / "scene-media-manifest.json").write_text(

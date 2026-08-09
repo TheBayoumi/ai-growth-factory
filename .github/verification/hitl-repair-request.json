@@ -1,0 +1,8 @@
+{
+  "schema_version": "hitl-repair-request-v72",
+  "source_canary_id": "20260809T172502Z-c5aea45c",
+  "source_approval_subject_sha256": "c6697cf2d4e1b99a8f6678d3d5203091c594b423de4bf897596e35e3daaa00a3",
+  "source_code_sha": "c39d951257b5d1ce18f4bd0e3e202f3373e09d1d",
+  "rejected_shot_ids": [7, 12, 13, 14, 15, 16],
+  "reason": "Gate-1 human simulation rejected semantic/action mismatches in shots 7,12,13,14,15,16 and also found unsupported audience copy. Reuse is allowed only for non-rejected frames whose normalized visual direction is unchanged and which pass current machine review."
+}

@@ -17,6 +17,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "production_pacing.py",
             "production_reviewer_feedback.py",
             "production_voice_repair.py",
+            "production_qwen_omni_bitsandbytes_v28.py",
             "production_visual_routing.py",
             "production_visual_semantics.py",
             "production_video_qc.py",
@@ -46,28 +47,33 @@ class ProductionSourcePackagingTests(unittest.TestCase):
             "from factory.production_runtime import install_production_runtime; "
             "install_production_runtime()"
         )
-        deploy_step = "Deploy exact PR head to isolated Modal tag"
+        deploy_step = "Deploy exact requested ref to isolated Modal tag"
         self.assertIn(production_preflight, workflow)
         self.assertIn(deploy_step, workflow)
         self.assertLess(
             workflow.index("Production runtime import preflight passed"),
             workflow.index(deploy_step),
         )
-        for visual_authority in (
-            "install_production_visual_routing",
-            "install_production_visual_semantics",
-            "install_production_visual_quality",
+        for authority in (
+            "install_production_qwen_omni_bitsandbytes_v28",
+            "install_production_voice_clause_fallback_v33",
+            "install_production_visual_subject_authority_v31",
+            "install_production_visual_atomic_storyboard_v34",
         ):
-            with self.subTest(visual_authority=visual_authority):
-                self.assertIn(visual_authority, runtime)
+            with self.subTest(authority=authority):
+                self.assertIn(authority, runtime)
 
     def test_modal_worker_pins_and_preflights_wan_exporter(self):
         source = (ROOT / "cloud" / "modal_app.py").read_text(encoding="utf-8")
         project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"imageio==2.37.0"', source)
         self.assertIn('"imageio==2.37.0"', project)
-        self.assertIn("import decord, imageio, imageio_ffmpeg", source)
+        self.assertIn("import bitsandbytes, decord, imageio, imageio_ffmpeg", source)
         self.assertIn("imageio_ffmpeg.get_ffmpeg_exe", source)
+        self.assertIn(
+            "Voice, bitsandbytes 4-bit Omni reviewer, image, and Wan2.2 runtime preflight passed",
+            source,
+        )
 
     def test_runtime_installs_audio_source_visual_and_media_aware_policies(self):
         source = (ROOT / "factory" / "production_runtime.py").read_text(
@@ -75,6 +81,7 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         )
         self.assertIn("install_production_audio_qc", source)
         self.assertIn("install_production_source_publisher_canonicalization", source)
+        self.assertIn("install_production_qwen_omni_bitsandbytes_v28", source)
         self.assertIn("install_production_visual_semantics", source)
         self.assertIn("install_production_video_qc", source)
         self.assertLess(
@@ -84,6 +91,10 @@ class ProductionSourcePackagingTests(unittest.TestCase):
         self.assertLess(
             source.index("install_production_source_publisher_canonicalization()"),
             source.index("install_production_content_gate()"),
+        )
+        self.assertLess(
+            source.index("install_production_qwen_omni_bitsandbytes_v28()"),
+            source.index("install_production_voice_convergence_v28()"),
         )
         self.assertLess(
             source.index("install_production_visual_routing()"),

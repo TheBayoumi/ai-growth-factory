@@ -49,6 +49,27 @@ Analytics replay and subscriber-aware Thompson sampling
 
 The models are deliberately serialized. The script model, TTS model and reviewer are never expected to remain resident together on the T4.
 
+## Cost-gated production loop
+
+Paid visual inference is the final generation stage, not an integration test. The production
+entry point now executes this non-compensating sequence:
+
+1. Generate and source-check the package with bounded corrective retries.
+2. Expand each visual-director candidate into the executable editorial timeline. Reject or repair
+   the candidate until shot duration, opening density, Wan allocation, claim alignment,
+   environment diversity and rendered caption bounds pass.
+3. Generate and review narration only after the static preflight passes.
+4. Rebuild the exact timeline from reviewed audio and run the real compositor at 720x1280 and
+   30 FPS with unique placeholder media. The resulting `preflight-animatic.mp4` must preserve the
+   complete duration, every caption and all transitions.
+5. Load image/video models only when `static-preflight.json` and
+   `production-preflight.json` both pass with the same quality-contract digest.
+6. Apply final MP4 QC, then require an independent digest-bound playback review before release.
+
+Failed visual candidates are repaired inside the existing three-attempt director loop. A failed
+animatic stops the run before FLUX/SDXL or Wan inference; it never relaxes the quality contract or
+automatically starts another paid workflow.
+
 ## Cost guard
 
 The Modal production contract is intentionally bounded:
