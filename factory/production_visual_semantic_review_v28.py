@@ -581,6 +581,7 @@ def _write_combined_manifest(
     assets: dict[int, Any],
     history: list[Any],
     diversity_failures: dict[int, str],
+    repair_seed: dict[str, Any] | None = None,
 ) -> None:
     ordered = [assets[index] for index in sorted(assets)]
     payload = {
@@ -600,6 +601,7 @@ def _write_combined_manifest(
         "asset_cache": {
             "approved_assets_preserved_across_retries": True,
             "regenerate_failed_only": True,
+            "cross_checkpoint_repair": repair_seed or {"enabled": False},
         },
         "set_diversity": {
             "minimum_average_hash_distance": 20,
@@ -639,36 +641,73 @@ def _install_v28_reviewed_generator(raw_generate: Any, visual_pipeline: Any) -> 
         history: list[Any] = []
         pending = set(base_scenes)
         last_diversity_failures: dict[int, str] = {}
+        repair_seed_info: dict[str, Any] = {"enabled": False}
+
+        from .production_hitl_repair_v72 import load_hitl_repair_seed_v72
+
+        repair_candidates, repair_seed_info = load_hitl_repair_seed_v72(
+            plan=plan,
+            current_scenes=current_scenes,
+            output_dir=output_dir,
+        )
+        if repair_candidates:
+            reviewer = SemanticVisualReviewerV28()
+            try:
+                cached_reviews = []
+                for index in sorted(repair_candidates):
+                    asset = repair_candidates[index]
+                    review = reviewer.review(
+                        asset.path,
+                        current_scenes[index],
+                        attempt=1,
+                        executable_prompt=asset.prompt,
+                    )
+                    cached_reviews.append(review)
+                    if review.decision == "approve":
+                        approved[index] = asset
+                        pending.discard(index)
+            finally:
+                reviewer.unload()
+            history.extend(cached_reviews)
+            repair_seed_info = {
+                **repair_seed_info,
+                "machine_reviewed_reused_shots": sorted(repair_candidates),
+                "machine_approved_reused_shots": sorted(approved),
+                "machine_rejected_reused_shots": sorted(
+                    item.scene_index for item in cached_reviews if item.decision != "approve"
+                ),
+            }
 
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             attempt_dir = output_dir.parent / f"{output_dir.name}-v28-attempt-{attempt}"
             if attempt_dir.exists():
                 shutil.rmtree(attempt_dir)
-            subset_plan = replace(
-                plan,
-                scenes=tuple(current_scenes[index] for index in sorted(pending)),
-            )
-            generated = raw_generate(subset_plan, attempt_dir)
-            reviewer = SemanticVisualReviewerV28()
-            try:
-                reviews = []
-                generated_by_index = {asset.scene_index: asset for asset in generated}
-                for index in sorted(pending):
-                    asset = generated_by_index[index]
-                    final_path = output_dir / f"scene-{index:02d}-keyframe.png"
-                    shutil.copy2(asset.path, final_path)
-                    final_asset = replace(asset, path=final_path)
-                    review = reviewer.review(
-                        final_path,
-                        current_scenes[index],
-                        attempt=attempt,
-                        executable_prompt=asset.prompt,
-                    )
-                    reviews.append(review)
-                    if review.decision == "approve":
-                        approved[index] = final_asset
-            finally:
-                reviewer.unload()
+            reviews = []
+            if pending:
+                subset_plan = replace(
+                    plan,
+                    scenes=tuple(current_scenes[index] for index in sorted(pending)),
+                )
+                generated = raw_generate(subset_plan, attempt_dir)
+                reviewer = SemanticVisualReviewerV28()
+                try:
+                    generated_by_index = {asset.scene_index: asset for asset in generated}
+                    for index in sorted(pending):
+                        asset = generated_by_index[index]
+                        final_path = output_dir / f"scene-{index:02d}-keyframe.png"
+                        shutil.copy2(asset.path, final_path)
+                        final_asset = replace(asset, path=final_path)
+                        review = reviewer.review(
+                            final_path,
+                            current_scenes[index],
+                            attempt=attempt,
+                            executable_prompt=asset.prompt,
+                        )
+                        reviews.append(review)
+                        if review.decision == "approve":
+                            approved[index] = final_asset
+                finally:
+                    reviewer.unload()
             history.extend(reviews)
             failed = {item.scene_index: item for item in reviews if item.decision != "approve"}
 
@@ -698,6 +737,7 @@ def _install_v28_reviewed_generator(raw_generate: Any, visual_pipeline: Any) -> 
                     assets=approved,
                     history=history,
                     diversity_failures={},
+                    repair_seed=repair_seed_info,
                 )
                 plan_path = output_dir.parent / "visual-plan.json"
                 plan_path.write_text(json.dumps(plan.as_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
@@ -711,6 +751,7 @@ def _install_v28_reviewed_generator(raw_generate: Any, visual_pipeline: Any) -> 
                     assets=approved,
                     history=history,
                     diversity_failures=last_diversity_failures,
+                    repair_seed=repair_seed_info,
                 )
                 summary = "; ".join(
                     f"scene {index}: {review.reason}" for index, review in sorted(failed.items())

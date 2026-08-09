@@ -58,6 +58,7 @@ _RELATIONSHIP_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bco-developed\b", "co-development"),
     (r"\bworked\s+together\b", "worked together"),
     (r"\bin\s+partnership\s+with\b", "partnership"),
+    (r"\bstrategic\s+partnerships?\b", "strategic partnership"),
 )
 _RELATIONSHIP_EVIDENCE_TERMS = (
     "collaboration",
@@ -78,6 +79,7 @@ PRODUCTION EDITORIAL RULES:
 - Tell ONE coherent, current story. One source may be the main evidence and another may add directly relevant context; never splice unrelated announcements into a broad trend.
 - The title and opening sentence must name a concrete company, product, policy, model, benchmark, or release from the supplied source titles.
 - Distinguish the article authority from the hosting publisher. Never say a feed or model-hosting platform launched or created something unless the supplied evidence explicitly says it did.
+- Article author/byline metadata is provenance, not factual evidence about the reported project. Never claim an author led, owned, founded, announced, built, or was responsible for the project unless that role is explicitly supported in the supplied title or summary.
 - Open with the specific change and its consequence in the first 12 words. Do not begin with a generic industry overview.
 - Narration must be 130-140 words so the finished vertical video lands inside 55-62 seconds after natural pauses.
 - Avoid generic filler such as “AI advancements,” “leading advancements,” “shaping the future,” and “more effective, ethical, and accessible.”
@@ -218,7 +220,16 @@ def _validate_source_relationships(
     """Reject invented relationships between otherwise independent publishers."""
     from .local_llm import LocalLLMError
 
-    copy = f"{package.title} {package.narration}".casefold()
+    copy = " ".join(
+        (
+            package.title,
+            package.narration,
+            package.description,
+            package.top_comment,
+            *(scene.heading for scene in package.scenes),
+            *(scene.body for scene in package.scenes),
+        )
+    ).casefold()
     evidence = " ".join(
         f"{source.publisher} {source.title} {source.summary}" for source in selected
     ).casefold()
@@ -269,6 +280,62 @@ def _validate_release_authority(
             raise LocalLLMError(
                 f"Production {label} attributes the release to hosting publisher "
                 f"{primary.publisher!r}; supplied source authority is {authority!r}"
+            )
+
+
+_AUTHOR_ORG_MARKERS = {
+    "ai", "research", "labs", "lab", "team", "staff", "newsroom", "editorial",
+    "press", "group", "foundation", "university", "institute", "inc", "llc", "corp",
+    "corporation", "company", "technologies", "technology",
+}
+
+
+def _personal_source_author(source: SourceItem) -> str:
+    author = " ".join(str(getattr(source, "author", "") or "").split()).strip()
+    if not author or author.casefold() == str(source.publisher).strip().casefold():
+        return ""
+    tokens = re.findall(r"[A-Za-z][A-Za-z'.-]*", author)
+    if not 2 <= len(tokens) <= 4:
+        return ""
+    lowered = {token.casefold().strip(".-'") for token in tokens}
+    if lowered & _AUTHOR_ORG_MARKERS:
+        return ""
+    if not all(token[0].isupper() for token in tokens if token):
+        return ""
+    return author
+
+
+def _validate_author_metadata_grounding(
+    package: VideoPackage,
+    selected: list[SourceItem],
+) -> None:
+    """Prevent a byline from becoming an invented project role.
+
+    A personal author may appear in viewer copy only when the selected article's factual title or
+    summary also mentions that person. This intentionally treats author metadata as provenance,
+    never as evidence of leadership, ownership, responsibility, or announcement authority.
+    """
+    from .local_llm import LocalLLMError
+
+    viewer_copy = " ".join(
+        (
+            package.title,
+            package.narration,
+            package.description,
+            package.top_comment,
+            *(scene.heading for scene in package.scenes),
+            *(scene.body for scene in package.scenes),
+        )
+    ).casefold()
+    for source in selected:
+        author = _personal_source_author(source)
+        if not author or author.casefold() not in viewer_copy:
+            continue
+        factual_evidence = f"{source.title} {source.summary}".casefold()
+        if author.casefold() not in factual_evidence:
+            raise LocalLLMError(
+                "Production viewer copy promotes article author/byline metadata into an unsupported "
+                f"factual claim about {author!r}; the selected title/summary does not mention that person"
             )
 
 
@@ -355,6 +422,7 @@ def _validate_publishable_content(
 
     _validate_source_relationships(package, selected)
     _validate_release_authority(package, selected)
+    _validate_author_metadata_grounding(package, selected)
     _validate_evidence_specificity(package, selected)
 
     first_sentence = re.split(r"(?<=[.!?])\s+", package.narration.strip(), maxsplit=1)[0]

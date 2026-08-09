@@ -3,12 +3,12 @@ from datetime import datetime, timezone
 
 from factory.feeds import SourceItem
 from factory.models import Scene, VideoPackage
-from factory.production_content import _validate_publishable_content
+from factory.production_content import _validate_publishable_content, _validate_source_relationships
 from factory.production_relationship_grounding import ground_unsupported_relationships
 
 
 class ProductionRelationshipGroundingTests(unittest.TestCase):
-    def test_invented_collaboration_becomes_independent_source_context(self):
+    def test_invented_collaboration_is_not_hidden_as_source_process_copy(self):
         now = datetime.now(timezone.utc)
         sources = [
             SourceItem(
@@ -72,13 +72,11 @@ class ProductionRelationshipGroundingTests(unittest.TestCase):
         repaired = ground_unsupported_relationships(package, sources)
         lowered = f"{repaired.title} {repaired.narration}".casefold()
 
-        self.assertNotIn("collaboration between", lowered)
-        self.assertIn("separate primary-source context", repaired.narration)
-        self.assertIn("evaluated independently", repaired.narration)
-        self.assertIn("OpenAI", repaired.title)
-        self.assertGreaterEqual(len(repaired.narration.split()), 130)
-        self.assertLessEqual(len(repaired.narration.split()), 140)
-        _validate_publishable_content(repaired, sources)
+        self.assertIn("collaboration between", lowered)
+        self.assertNotIn("separate primary-source context", repaired.narration)
+        self.assertNotIn("Independent source context", " ".join(scene.heading for scene in repaired.scenes))
+        with self.assertRaisesRegex(Exception, "unsupported cross-source relationship"):
+            _validate_source_relationships(repaired, sources)
 
     def test_explicit_relationship_in_source_evidence_is_preserved(self):
         now = datetime.now(timezone.utc)

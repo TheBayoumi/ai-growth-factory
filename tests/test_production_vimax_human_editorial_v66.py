@@ -81,6 +81,33 @@ class ProductionViMaxHumanEditorialV66Tests(unittest.TestCase):
         failures = consumer_editorial_failures_v66(package)
         self.assertTrue(any("internal source/provenance" in item for item in failures))
 
+    def test_internal_provenance_in_scene_copy_is_rejected(self) -> None:
+        package = self._package(
+            "Firebird launched a new AI factory in Armenia. "
+            + "Concrete infrastructure evidence remains in the supplied source. " * 20
+        )
+        scenes = list(package.scenes)
+        scenes[3] = Scene(
+            heading="Independent source context",
+            body="The selected reports are evaluated separately and support only their attributed claims.",
+            visual=scenes[3].visual,
+            source_index=scenes[3].source_index,
+        )
+        package = VideoPackage(
+            topic=package.topic,
+            narration=package.narration,
+            title=package.title,
+            description=package.description,
+            tags=package.tags,
+            thumbnail_text=package.thumbnail_text,
+            top_comment=package.top_comment,
+            scenes=scenes,
+            source_urls=package.source_urls,
+            source_publishers=package.source_publishers,
+        )
+        failures = consumer_editorial_failures_v66(package)
+        self.assertTrue(any("scene copy" in item for item in failures))
+
     def test_multiple_generic_filler_claims_are_rejected(self) -> None:
         package = self._package(
             "Firebird launched a new AI facility. This is part of a broader trend in AI infrastructure growth. "

@@ -78,13 +78,35 @@ def apply_focused_narration_rewrite_v69(
 
 
 def install_production_vimax_focused_copy_protocol_v69() -> None:
-    """Replace the large v66 rewrite schema with narration-only bounded repair."""
+    """Use narration-only repair by default, but restore full copy repair when scenes failed.
+
+    A narration-only schema is cheaper and more reliable for ordinary copy cleanup. It cannot repair
+    viewer-facing scene text, so scene-copy failures deliberately fall back to v66's bounded full
+    title/narration/scene rewrite instead of looping on an immutable bad scene.
+    """
     global _INSTALLED
     if _INSTALLED:
         return
 
     from . import production_vimax_human_editorial_v66 as v66
 
-    v66._focused_editorial_prompt_v66 = focused_narration_prompt_v69
-    v66._apply_focused_editorial_rewrite_v66 = apply_focused_narration_rewrite_v69
+    full_prompt = v66._focused_editorial_prompt_v66
+    full_apply = v66._apply_focused_editorial_rewrite_v66
+
+    def routed_prompt(
+        package: VideoPackage,
+        sources: Sequence[SourceItem],
+        validation_error: str,
+    ) -> str:
+        if "scene copy" in str(validation_error).casefold():
+            return full_prompt(package, sources, validation_error)
+        return focused_narration_prompt_v69(package, sources, validation_error)
+
+    def routed_apply(package: VideoPackage, raw: dict[str, Any]) -> VideoPackage:
+        if "scenes" in raw or "title" in raw:
+            return full_apply(package, raw)
+        return apply_focused_narration_rewrite_v69(package, raw)
+
+    v66._focused_editorial_prompt_v66 = routed_prompt
+    v66._apply_focused_editorial_rewrite_v66 = routed_apply
     _INSTALLED = True

@@ -32,6 +32,69 @@ def _clean_code_sha(value: str) -> str:
     return clean
 
 
+_REPAIR_ENV_KEYS = (
+    "HITL_REPAIR_SOURCE_DIR",
+    "HITL_REPAIR_APPROVAL_SUBJECT_SHA256",
+    "HITL_REPAIR_SOURCE_CODE_SHA",
+    "HITL_REPAIR_REJECTED_SHOTS",
+    "HITL_REPAIR_REQUEST_SHA256",
+)
+
+
+def _configure_hitl_repair_request(code_sha: str) -> dict[str, Any] | None:
+    """Load an optional checked-in rejected-checkpoint repair request into the remote runtime.
+
+    Clearing the variables first is mandatory because Modal containers may be warm-reused between
+    invocations; a future run without a request must never inherit an older repair checkpoint.
+    """
+    import hashlib
+
+    for key in _REPAIR_ENV_KEYS:
+        os.environ.pop(key, None)
+    request_path = Path(__file__).resolve().parents[1] / ".github" / "verification" / "hitl-repair-request.json"
+    if not request_path.is_file():
+        return None
+    raw = request_path.read_bytes()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid HITL repair request JSON: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("schema_version") != "hitl-repair-request-v72":
+        raise ValueError("unsupported HITL repair request schema")
+    source_canary = str(payload.get("source_canary_id") or "").strip()
+    source_digest = str(payload.get("source_approval_subject_sha256") or "").strip().lower()
+    source_code = _clean_code_sha(str(payload.get("source_code_sha") or ""))
+    if source_code == _clean_code_sha(code_sha):
+        raise ValueError("repair source code SHA must be older than the current exact-head revision")
+    if not source_canary or Path(source_canary).name != source_canary:
+        raise ValueError("repair request contains an unsafe source canary ID")
+    if not re.fullmatch(r"[0-9a-f]{64}", source_digest):
+        raise ValueError("repair request approval subject must be a 64-character SHA-256")
+    raw_rejected = payload.get("rejected_shot_ids")
+    if not isinstance(raw_rejected, list) or not raw_rejected:
+        raise ValueError("repair request must contain rejected_shot_ids")
+    try:
+        rejected = sorted({int(value) for value in raw_rejected})
+    except (TypeError, ValueError) as exc:
+        raise ValueError("repair request rejected_shot_ids must be integers") from exc
+    if rejected[0] < 0:
+        raise ValueError("repair request rejected shot IDs must be non-negative")
+    request_sha = hashlib.sha256(raw).hexdigest()
+    os.environ["HITL_REPAIR_SOURCE_DIR"] = str(Path(STATE_DIR) / "canaries" / source_canary)
+    os.environ["HITL_REPAIR_APPROVAL_SUBJECT_SHA256"] = source_digest
+    os.environ["HITL_REPAIR_SOURCE_CODE_SHA"] = source_code
+    os.environ["HITL_REPAIR_REJECTED_SHOTS"] = ",".join(str(value) for value in rejected)
+    os.environ["HITL_REPAIR_REQUEST_SHA256"] = request_sha
+    return {
+        "schema_version": payload["schema_version"],
+        "source_canary_id": source_canary,
+        "source_approval_subject_sha256": source_digest,
+        "source_code_sha": source_code,
+        "rejected_shot_ids": rejected,
+        "request_sha256": request_sha,
+    }
+
+
 def _persist_gate1_result(result: dict[str, Any], *, code_sha: str) -> Path:
     """Persist a deterministic exact-SHA result pointer in addition to streamed stdout."""
     clean_sha = _clean_code_sha(code_sha)
@@ -94,6 +157,7 @@ def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
     os.environ["WAN22_MODEL_CPU_OFFLOAD"] = "true"
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "true"
     os.environ["HITL_CODE_SHA"] = code_sha
+    repair_request = _configure_hitl_repair_request(code_sha)
     _prepare_runtime()
 
     from factory.production_caption_scale_v67 import install_production_caption_scale_v67
@@ -145,6 +209,7 @@ def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
                 "caption_geometry": "resolution_proportional_v67",
                 "editorial_boundary": "post_grounding_capacity_authority_and_consumer_copy_v66",
                 "human_review_required": True,
+                "repair_request": repair_request,
                 "vimax_commit": VIMAX_COMMIT,
             }
         except Exception as exc:
@@ -171,6 +236,8 @@ def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
         }
     else:
         final = _structured_machine_failure(dict(result), code_sha=code_sha)
+        if repair_request is not None:
+            final["repair_request"] = repair_request
 
     _persist_gate1_result(final, code_sha=code_sha)
     state_volume.commit()

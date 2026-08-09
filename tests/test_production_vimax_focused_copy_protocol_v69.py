@@ -6,6 +6,7 @@ from factory.models import Scene, VideoPackage
 from factory.production_vimax_focused_copy_protocol_v69 import (
     apply_focused_narration_rewrite_v69,
     focused_narration_prompt_v69,
+    install_production_vimax_focused_copy_protocol_v69,
 )
 
 
@@ -53,6 +54,14 @@ class ProductionViMaxFocusedCopyProtocolV69Tests(unittest.TestCase):
     def test_missing_narration_reports_response_keys(self) -> None:
         with self.assertRaisesRegex(Exception, "response_keys"):
             apply_focused_narration_rewrite_v69(self._package(), {"result": "text"})
+
+    def test_installer_declares_scene_copy_fallback_to_full_v66_schema(self) -> None:
+        import inspect
+
+        source = inspect.getsource(install_production_vimax_focused_copy_protocol_v69)
+        self.assertIn('"scene copy"', source)
+        self.assertIn("full_prompt", source)
+        self.assertIn("full_apply", source)
 
     def test_prompt_requests_one_field_only(self) -> None:
         package = self._package()

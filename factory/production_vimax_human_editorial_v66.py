@@ -20,6 +20,8 @@ _INTERNAL_PROVENANCE_PATTERNS = (
     re.compile(r"\beach report is evaluated independently\b", re.IGNORECASE),
     re.compile(r"\bsupports only its attributed claim\b", re.IGNORECASE),
     re.compile(r"\bsource attribution (?:is|was) evaluated\b", re.IGNORECASE),
+    re.compile(r"\bindependent source context\b", re.IGNORECASE),
+    re.compile(r"\bselected reports? (?:are|were) evaluated (?:separately|independently)\b", re.IGNORECASE),
 )
 _GENERIC_FILLER_PATTERNS = (
     re.compile(r"\bbroader trend in .* growth\b", re.IGNORECASE),
@@ -34,7 +36,8 @@ FINAL HUMAN-EDITORIAL SPOKEN COPY CONTRACT (takes precedence over generic filler
 - Replace generic phrases such as 'broader trend', 'wide range of applications', and 'key step in expanding capabilities' with concrete facts already present in the supplied source title/summary.
 - Do not invent a new fact merely to reach the word target. If the supplied evidence cannot support 130-134 useful spoken words, return skip_reason.
 - The first sentence must identify the actual release actor supported by the source, not merely the hosting publisher.
-- Scene bodies must use the same supported actor attribution as the narration.
+- Article author/byline metadata is provenance only. Never assign the author a project role unless SELECTED EVIDENCE title/summary explicitly states it.
+- Scene bodies must use the same supported actor attribution as the narration and must never expose source-selection/evaluation process language.
 """.strip()
 
 # Five acts, four shots each. Every direction is one simple physical action in one continuous
@@ -73,9 +76,16 @@ def _clean(value: object) -> str:
 
 def consumer_editorial_failures_v66(package: VideoPackage) -> tuple[str, ...]:
     narration = _clean(package.narration)
+    scene_copy = " ".join(
+        _clean(value)
+        for scene in package.scenes
+        for value in (scene.heading, scene.body)
+    )
     failures: list[str] = []
     if any(pattern.search(narration) for pattern in _INTERNAL_PROVENANCE_PATTERNS):
         failures.append("spoken narration contains internal source/provenance process language")
+    if any(pattern.search(scene_copy) for pattern in _INTERNAL_PROVENANCE_PATTERNS):
+        failures.append("scene copy contains internal source/provenance process language")
     generic_hits = sum(bool(pattern.search(narration)) for pattern in _GENERIC_FILLER_PATTERNS)
     if generic_hits >= 2:
         failures.append(f"spoken narration contains {generic_hits} generic filler claims instead of concrete supplied evidence")

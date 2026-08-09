@@ -7,9 +7,11 @@ from factory.local_llm import LocalLLMError
 from factory.models import Scene, VideoPackage
 from factory.production_content import (
     _ground_generic_copy,
+    _validate_author_metadata_grounding,
     _validate_evidence_specificity,
     _validate_publishable_content,
     _validate_release_authority,
+    _validate_source_relationships,
 )
 
 
@@ -127,6 +129,72 @@ class ProductionCopyGroundingTests(unittest.TestCase):
             "unsupported cross-source relationship",
         ):
             _validate_publishable_content(grounded, [self.openai, self.microsoft])
+
+    def test_scene_copy_cannot_hide_unsupported_partnership(self):
+        package = self._package(
+            narration=self._narration("changing current practice"),
+            sources=[self.openai, self.microsoft],
+        )
+        package = replace(
+            package,
+            scenes=[
+                replace(scene, body="The project is a result of strategic partnerships and technical expertise.")
+                if index == 3 else scene
+                for index, scene in enumerate(package.scenes)
+            ],
+        )
+        with self.assertRaisesRegex(LocalLLMError, "unsupported cross-source relationship"):
+            _validate_source_relationships(package, [self.openai, self.microsoft])
+
+    def test_personal_article_author_cannot_be_promoted_to_project_lead(self):
+        source = SourceItem(
+            publisher="NVIDIA",
+            author="Rev Lebaredian",
+            title="Firebird Launches CIS Region's Largest AI Factory in Armenia",
+            url="https://example.com/firebird",
+            summary=(
+                "Firebird launched a large AI factory in Armenia using NVIDIA accelerated computing "
+                "and Dell Technologies high-performance infrastructure for AI workloads and research. "
+                "Government and industry leaders attended the launch event and discussed regional capacity."
+            ),
+            published_at=datetime.now(timezone.utc),
+        )
+        package = replace(
+            self._package(narration=self._narration("changing current practice")),
+            title="Firebird Launches Armenia AI Factory",
+            narration=self._narration("changing current practice").replace(
+                "OpenAI released Realtime API updates for reliable tool calling.",
+                "Firebird launched a large AI factory in Armenia. The project is led by Rev Lebaredian.",
+            ),
+            source_urls=[source.url],
+            source_publishers=[source.publisher],
+        )
+        with self.assertRaisesRegex(LocalLLMError, "author/byline metadata"):
+            _validate_author_metadata_grounding(package, [source])
+
+    def test_personal_author_is_allowed_when_factual_evidence_mentions_person(self):
+        source = SourceItem(
+            publisher="Example News",
+            author="Jane Smith",
+            title="Project Atlas Names Jane Smith as Technical Lead",
+            url="https://example.com/atlas",
+            summary=(
+                "Jane Smith is the technical lead for Project Atlas and oversees the engineering rollout. "
+                "The project uses controlled validation milestones and documented infrastructure tests."
+            ),
+            published_at=datetime.now(timezone.utc),
+        )
+        package = replace(
+            self._package(narration=self._narration("changing current practice")),
+            title="Project Atlas Names Jane Smith Lead",
+            narration=self._narration("changing current practice").replace(
+                "OpenAI released Realtime API updates for reliable tool calling.",
+                "Project Atlas named Jane Smith as its technical lead for the engineering rollout.",
+            ),
+            source_urls=[source.url],
+            source_publishers=[source.publisher],
+        )
+        _validate_author_metadata_grounding(package, [source])
 
     def test_hosting_platform_cannot_claim_liquid_ai_release(self):
         source = SourceItem(
