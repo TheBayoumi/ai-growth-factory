@@ -44,6 +44,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     from factory.production_caption_scale_v67 import install_production_caption_scale_v67
     from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
     from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
+    from factory.production_vimax_copy_integrity_v68 import install_production_vimax_copy_integrity_v68
     from factory.production_vimax_human_editorial_v66 import install_production_vimax_human_editorial_v66
     from factory.production_vimax_infrastructure_grammar_v62 import install_production_vimax_infrastructure_grammar_v62
     from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
@@ -53,6 +54,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
     install_production_vimax_infrastructure_grammar_v62()
     install_production_vimax_unified_storyboard_v64()
     install_production_vimax_human_editorial_v66()
+    install_production_vimax_copy_integrity_v68()
     install_production_keyframe_human_gate_v63()
 
     result = _run_render_canary()
@@ -63,6 +65,7 @@ def render_vimax_temporal_canary() -> dict[str, object]:
         "render_backend": "remotion",
         "validation_gpu": "A10",
         "editorial_grammar": "human_editorial_v66",
+        "copy_integrity": "finished_punctuation_v68",
         "caption_geometry": "resolution_proportional_v67",
         "editorial_boundary": "post_grounding_capacity_authority_and_consumer_copy_v66",
         "human_keyframe_dossier": "keyframe-human-review-dossier.json",

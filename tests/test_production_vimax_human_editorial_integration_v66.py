@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from factory.feeds import SourceItem
 from factory.models import Scene, VideoPackage
+import factory.production_vimax_copy_integrity_v68 as v68
 import factory.production_vimax_human_editorial_v66 as v66
 
 
@@ -117,6 +118,7 @@ class ProductionViMaxHumanEditorialV66IntegrationTests(unittest.TestCase):
             new=unexpected_package_parser,
         ), patch.object(local_llm, "_repair_prompt", new=repair_prompt):
             v66._install_consumer_copy_gate()
+            v68.install_production_vimax_copy_integrity_v68()
             repaired = canary.generate_package(SimpleNamespace(), [source], SimpleNamespace())
 
         self.assertEqual("Firebird Launches Armenia AI Factory", repaired.title)
@@ -132,6 +134,7 @@ class ProductionViMaxHumanEditorialV66IntegrationTests(unittest.TestCase):
             [scene.visual for scene in bad.scenes],
             [scene.visual for scene in repaired.scenes],
         )
+        self.assertTrue(all(scene.body.endswith(".") for scene in repaired.scenes))
 
     def test_focused_rewrite_rejects_scene_reordering_or_missing_ids(self) -> None:
         bad = self._bad_package()
