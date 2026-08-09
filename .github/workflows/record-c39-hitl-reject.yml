@@ -1,0 +1,72 @@
+name: Record c39 HITL Simulation Rejection
+
+on:
+  push:
+    branches:
+      - debug/export-c39-stagea
+    paths:
+      - ".github/workflows/record-c39-hitl-reject.yml"
+
+permissions:
+  contents: read
+
+env:
+  MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+  MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
+jobs:
+  reject:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: modal-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore exact reviewed implementation
+        run: |
+          git checkout c39d951257b5d1ce18f4bd0e3e202f3373e09d1d -- cloud factory pyproject.toml requirements.txt 2>/dev/null || \
+          git checkout c39d951257b5d1ce18f4bd0e3e202f3373e09d1d -- cloud factory pyproject.toml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "modal==1.5.3"
+      - name: Record explicit simulated-human rejection
+        run: |
+          modal run -m cloud.modal_vimax_temporal_canary::app.record_vimax_keyframe_review \
+            --approved-canary-id "20260809T172502Z-c5aea45c" \
+            --approval-subject-sha256 "c6697cf2d4e1b99a8f6678d3d5203091c594b423de4bf897596e35e3daaa00a3" \
+            --approved-code-sha "c39d951257b5d1ce18f4bd0e3e202f3373e09d1d" \
+            --reviewer-kind human_simulation \
+            --verdict reject \
+            --reviewed-shots "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19" \
+            --notes "HITL simulation reviewed all 20 real keyframes. Reject: shot 07 misses planned overhead busway/power action; shot 12 has no technician/cart/capacity-expansion action; shot 13 misses overhead-tray/ladder action; shot 14 is wrong environment (interior rack aisle instead of exterior cooling/electrical inspection); shot 15 contains implausible synthetic equipment and misses removable compute-module action; shot 16 misses the planned nearby compute-rack/physical connection. Narration also makes an unsupported inference that Rev Lebaredian led the project; author/announcement participation is not evidence of project leadership. Do not start Wan." \
+            | tee hitl-reject-modal.txt
+      - name: Verify persisted decision
+        run: |
+          mkdir -p reject-evidence
+          modal volume get --force ai-growth-factory-state \
+            "canaries/20260809T172502Z-c5aea45c/hitl-decision.json" reject-evidence
+          find reject-evidence -type f -maxdepth 3 -print
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          files=list(Path('reject-evidence').rglob('hitl-decision.json'))
+          if len(files) != 1:
+              raise SystemExit(f'expected one decision file, got {files}')
+          data=json.loads(files[0].read_text())
+          assert data['verdict']=='reject', data
+          assert data['reviewer_kind']=='human_simulation', data
+          assert data['code_sha']=='c39d951257b5d1ce18f4bd0e3e202f3373e09d1d', data
+          assert data['approval_subject_sha256']=='c6697cf2d4e1b99a8f6678d3d5203091c594b423de4bf897596e35e3daaa00a3', data
+          assert data['reviewed_shot_ids']==list(range(20)), data
+          print(json.dumps(data, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c39-hitl-simulation-rejection
+          path: |
+            hitl-reject-modal.txt
+            reject-evidence
+          retention-days: 14
+          if-no-files-found: error
