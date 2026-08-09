@@ -33,7 +33,7 @@ def _clean_code_sha(value: str) -> str:
 
 
 def _persist_gate1_result(result: dict[str, Any], *, code_sha: str) -> Path:
-    """Persist a deterministic exact-SHA result pointer in addition to CLI transport."""
+    """Persist a deterministic exact-SHA result pointer in addition to streamed stdout."""
     clean_sha = _clean_code_sha(code_sha)
     result_root = Path(STATE_DIR) / "hitl-results"
     result_root.mkdir(parents=True, exist_ok=True)
@@ -62,6 +62,15 @@ def _structured_machine_failure(result: dict[str, Any], *, code_sha: str) -> dic
     }
 
 
+def _emit_gate1_result(result: dict[str, Any]) -> None:
+    """Stream exactly one machine-readable result marker into `modal run` logs."""
+    print(
+        _HITL_RESULT_PREFIX
+        + json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        flush=True,
+    )
+
+
 @app.function(
     image=worker_image,
     gpu="A10",
@@ -74,7 +83,7 @@ def _structured_machine_failure(result: dict[str, Any], *, code_sha: str) -> dic
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
 def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
-    """Run exact production through keyframes and always return a structured Gate-1 result."""
+    """Run exact production through keyframes and always emit/return a structured Gate-1 result."""
     code_sha = _clean_code_sha(code_sha)
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
@@ -150,8 +159,6 @@ def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
                 "vimax_commit": VIMAX_COMMIT,
             }
     elif result.get("status") == "verified_render_canary":
-        # Gate 1 must never silently continue into Wan/Remotion. Preserve the canary ID so the
-        # unexpected artifact can still be exported and inspected rather than disappearing in logs.
         final = {
             **result,
             "status": "canary_failed_closed",
@@ -168,25 +175,5 @@ def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
     _persist_gate1_result(final, code_sha=code_sha)
     state_volume.commit()
     hf_cache.commit()
+    _emit_gate1_result(final)
     return final
-
-
-@app.local_entrypoint()
-def main(code_sha: str = "") -> None:
-    """Emit exactly one stable JSON result record for GitHub Actions and human-review tooling."""
-    clean_sha = _clean_code_sha(code_sha)
-    result = prepare_vimax_keyframe_review.remote(clean_sha)
-    if not isinstance(result, dict):
-        result = {
-            "status": "canary_failed_closed",
-            "release_decision": "blocked_gate1_transport_failure",
-            "approved_code_sha": clean_sha,
-            "human_review_required": False,
-            "error_type": "Gate1TransportError",
-            "error": "Modal Gate-1 function returned a non-object result",
-        }
-    print(
-        _HITL_RESULT_PREFIX
-        + json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
-        flush=True,
-    )

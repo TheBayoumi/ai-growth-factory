@@ -30,16 +30,19 @@ jobs:
           set -o pipefail
           CODE_SHA=$(git rev-parse HEAD)
           echo "$CODE_SHA" > exact-head-sha.txt
-          modal run -m cloud.modal_vimax_hitl_preproduction --code-sha "$CODE_SHA" | tee vimax-hitl-result.txt
+          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review --code-sha "$CODE_SHA" | tee vimax-hitl-result.txt
       - name: Parse structured Gate-1 result
-        id: result
+        if: always()
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
+          path = Path("vimax-hitl-result.txt")
+          if not path.is_file():
+              raise SystemExit("Gate-1 stdout log is missing")
           prefix = "HITL_RESULT_JSON="
-          lines = Path("vimax-hitl-result.txt").read_text(encoding="utf-8", errors="replace").splitlines()
+          lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
           matches = [line[len(prefix):] for line in lines if line.startswith(prefix)]
           if not matches:
               raise SystemExit("Gate-1 stdout did not contain HITL_RESULT_JSON")
