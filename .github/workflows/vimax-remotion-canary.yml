@@ -25,21 +25,56 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install "modal==1.5.3"
       - run: python scripts/repository_preflight.py
-      - name: Generate machine-reviewed keyframes and pause before Wan
+      - name: Invoke exact Gate-1 preproduction
         run: |
           set -o pipefail
-          modal run -m cloud.modal_vimax_hitl_preproduction::app.prepare_vimax_keyframe_review | tee vimax-hitl-result.txt
-          if grep -q 'awaiting_human_keyframe_review' vimax-hitl-result.txt; then
-            echo 'Keyframes are ready for mandatory human editorial review. Temporal generation is intentionally blocked.'
-            exit 1
+          CODE_SHA=$(git rev-parse HEAD)
+          echo "$CODE_SHA" > exact-head-sha.txt
+          modal run -m cloud.modal_vimax_hitl_preproduction --code-sha "$CODE_SHA" | tee vimax-hitl-result.txt
+      - name: Parse structured Gate-1 result
+        id: result
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          prefix = "HITL_RESULT_JSON="
+          lines = Path("vimax-hitl-result.txt").read_text(encoding="utf-8", errors="replace").splitlines()
+          matches = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+          if not matches:
+              raise SystemExit("Gate-1 stdout did not contain HITL_RESULT_JSON")
+          payload = json.loads(matches[-1])
+          if not isinstance(payload, dict):
+              raise SystemExit("Gate-1 result must be a JSON object")
+          Path("hitl-result.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+          print(json.dumps(payload, indent=2, ensure_ascii=False))
+          PY
+      - name: Recover exact-SHA result from Modal when stdout transport is absent
+        if: always()
+        run: |
+          set -u
+          if [ -s hitl-result.json ]; then
+            exit 0
           fi
+          CODE_SHA=$(cat exact-head-sha.txt 2>/dev/null || git rev-parse HEAD)
+          modal volume get --force ai-growth-factory-state "hitl-results/${CODE_SHA}.json" hitl-result.json || true
       - name: Export complete preproduction canary directory
         if: always()
         run: |
           set -u
-          CANARY=$(grep -Eo '[0-9]{8}T[0-9]{6}Z-[A-Za-z0-9]+' vimax-hitl-result.txt 2>/dev/null | tail -1 || true)
+          if [ ! -s hitl-result.json ]; then
+            echo "No structured Gate-1 result exists; canary export cannot be resolved." >&2
+            exit 0
+          fi
+          CANARY=$(python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("hitl-result.json").read_text())
+          print(str(payload.get("canary_id") or ""))
+          PY
+          )
           if [ -z "$CANARY" ]; then
-            echo "No canary id was emitted; nothing to export."
+            echo "Gate-1 result has no canary_id; retaining result/log evidence only."
             exit 0
           fi
           echo "$CANARY" > canary-id.txt
@@ -51,7 +86,27 @@ jobs:
         with:
           name: vimax-hitl-preproduction
           path: |
+            exact-head-sha.txt
             canary-id.txt
+            hitl-result.json
             vimax-hitl-result.txt
             canary-artifacts
           retention-days: 14
+      - name: Enforce human/release gate after evidence export
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("hitl-result.json")
+          if not path.is_file():
+              raise SystemExit("Gate-1 failed without a recoverable structured result")
+          payload = json.loads(path.read_text())
+          status = str(payload.get("status") or "")
+          decision = str(payload.get("release_decision") or "")
+          print(f"Gate-1 status={status} release_decision={decision}")
+          if status == "awaiting_human_keyframe_review":
+              raise SystemExit("Gate-1 complete: release intentionally blocked pending human keyframe review")
+          raise SystemExit(f"Gate-1 did not reach human review: {status} / {decision}")
+          PY
