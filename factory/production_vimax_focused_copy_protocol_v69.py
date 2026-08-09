@@ -33,13 +33,13 @@ The current narration failed:
 
 HARD BOUNDARY:
 - Return exactly one field: narration.
-- narration must contain 130-134 whitespace-separated words; count before returning.
+- narration must contain 132-134 whitespace-separated words; count before returning.
 - Preserve only concrete facts already supported by SELECTED EVIDENCE.
 - Remove all internal sourcing/attribution-process language and generic filler.
 - Keep the supported release actor correct.
 - Do not add a number, benchmark, partner, capability, location, relationship, or result absent from the evidence.
 - Do not explain your edit and do not return title, scenes, sources, notes, or markdown.
-- If the evidence cannot support 130-134 useful words, return exactly {{"skip_reason":"specific reason"}}.
+- If the evidence cannot support 132-134 useful words, return exactly {{"skip_reason":"specific reason"}}.
 
 CURRENT NARRATION:
 {package.narration}

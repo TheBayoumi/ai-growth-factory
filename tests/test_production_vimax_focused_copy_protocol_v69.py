@@ -79,6 +79,7 @@ class ProductionViMaxFocusedCopyProtocolV69Tests(unittest.TestCase):
         )()
         prompt = focused_narration_prompt_v69(package, [source], "bad internal copy")
         self.assertIn('Return exactly one field: narration', prompt)
+        self.assertIn('132-134 whitespace-separated words', prompt)
         self.assertIn('{"narration":"..."}', prompt)
         self.assertNotIn('"scenes": [', prompt)
 

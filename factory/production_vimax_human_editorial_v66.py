@@ -34,7 +34,7 @@ FINAL HUMAN-EDITORIAL SPOKEN COPY CONTRACT (takes precedence over generic filler
 - Write only audience-facing spoken narration. Never describe sourcing, attribution mechanics, report evaluation, or internal evidence handling.
 - Forbidden spoken boilerplate includes 'separate primary-source context', 'each report is evaluated independently', and 'supports only its attributed claim'.
 - Replace generic phrases such as 'broader trend', 'wide range of applications', and 'key step in expanding capabilities' with concrete facts already present in the supplied source title/summary.
-- Do not invent a new fact merely to reach the word target. If the supplied evidence cannot support 130-134 useful spoken words, return skip_reason.
+- Do not invent a new fact merely to reach the word target. If the supplied evidence cannot support 132-134 useful spoken words, return skip_reason.
 - The first sentence must identify the actual release actor supported by the source, not merely the hosting publisher.
 - Article author/byline metadata is provenance only. Never assign the author a project role unless SELECTED EVIDENCE title/summary explicitly states it.
 - Scene bodies must use the same supported actor attribution as the narration and must never expose source-selection/evaluation process language.
@@ -172,7 +172,7 @@ The previous package failed this final editorial review:
 
 HARD REWRITE BOUNDARY:
 - Rewrite only title, narration, and the heading/body text of the existing six scenes.
-- narration must contain 130-134 whitespace-separated words; count before returning.
+- narration must contain 132-134 whitespace-separated words; count before returning.
 - title must contain 28-78 characters.
 - exactly six scenes; heading <=5 words and body <=18 words.
 - Keep every scene_id exactly 0..5. Never add, remove, merge, or reorder scenes.
@@ -269,10 +269,17 @@ def repair_final_consumer_copy_v66(
 
     candidate = _repair_scene_actor(package, sources)
     failures = consumer_editorial_failures_v66(candidate)
-    if not failures:
-        return _validate_final_package(candidate, sources)
+    if failures:
+        validation_error = "; ".join(failures)
+    else:
+        try:
+            return _validate_final_package(candidate, sources)
+        except local_llm.LocalLLMError as exc:
+            # The focused repair loop owns *all* final audience-copy failures, not only the
+            # bespoke v66 provenance/filler checks. This closes the 120-129 word boundary gap
+            # and avoids throwing the entire trend/package candidate away for a one-word miss.
+            validation_error = str(exc)
 
-    validation_error = "; ".join(failures)
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
