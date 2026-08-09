@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -7,12 +8,13 @@ from collections import Counter
 from dataclasses import replace
 from typing import Any, Sequence
 
-from .feeds import SourceItem
+from .feeds import SourceItem, source_authority
 from .models import VideoPackage
 
 
 _INSTALLED = False
 _SPACE_RE = re.compile(r"\s+")
+_MAX_FINAL_REWRITE_ATTEMPTS = 2
 _INTERNAL_PROVENANCE_PATTERNS = (
     re.compile(r"\bseparate primary[- ]source context\b", re.IGNORECASE),
     re.compile(r"\beach report is evaluated independently\b", re.IGNORECASE),
@@ -116,14 +118,171 @@ def _is_package_prompt(prompt: str) -> bool:
     )
 
 
+def _selected_editorial_evidence(package: VideoPackage, sources: Sequence[SourceItem]) -> list[dict[str, str]]:
+    by_url = {source.url: source for source in sources}
+    records: list[dict[str, str]] = []
+    for url in package.source_urls:
+        source = by_url.get(url)
+        if source is None:
+            raise ValueError(f"selected editorial source is missing: {url}")
+        records.append(
+            {
+                "source_url": source.url,
+                "publisher": source.publisher,
+                "authority": source_authority(source),
+                "title": source.title,
+                "summary": source.summary,
+            }
+        )
+    return records
+
+
+def _focused_editorial_prompt_v66(
+    package: VideoPackage,
+    sources: Sequence[SourceItem],
+    validation_error: str,
+) -> str:
+    immutable_scenes = [
+        {
+            "scene_id": index,
+            "visual": scene.visual,
+            "source_index": int(scene.source_index),
+            "heading": scene.heading,
+            "body": scene.body,
+        }
+        for index, scene in enumerate(package.scenes)
+    ]
+    return f"""
+You are the final human-style editor for a factual vertical technology short. Repair the spoken/editorial copy only. Return one JSON object only.
+
+The previous package failed this final editorial review:
+{validation_error}
+
+{_EDITORIAL_CONTRACT}
+
+HARD REWRITE BOUNDARY:
+- Rewrite only title, narration, and the heading/body text of the existing six scenes.
+- narration must contain 130-134 whitespace-separated words; count before returning.
+- title must contain 28-78 characters.
+- exactly six scenes; heading <=5 words and body <=18 words.
+- Keep every scene_id exactly 0..5. Never add, remove, merge, or reorder scenes.
+- Do not return or change source URLs, publishers, source indices, visuals, tags, description, thumbnail text, topic, or CTA.
+- Use only facts explicitly supported by SELECTED EVIDENCE. Never invent a benchmark, number, capability, relationship, location, partner, or result.
+- Preserve useful concrete evidence and caveats; remove internal source-process language and generic filler.
+- If the evidence genuinely cannot support a useful 130-134 word script, return {{"skip_reason":"specific reason"}} instead of fabricating copy.
+
+CURRENT EDITORIAL COPY:
+{json.dumps({"title": package.title, "narration": package.narration, "scenes": immutable_scenes}, ensure_ascii=False)}
+
+SELECTED EVIDENCE:
+{json.dumps(_selected_editorial_evidence(package, sources), ensure_ascii=False)}
+
+Return exactly:
+{{
+  "title": "...",
+  "narration": "...",
+  "scenes": [
+    {{"scene_id": 0, "heading": "...", "body": "..."}},
+    {{"scene_id": 1, "heading": "...", "body": "..."}},
+    {{"scene_id": 2, "heading": "...", "body": "..."}},
+    {{"scene_id": 3, "heading": "...", "body": "..."}},
+    {{"scene_id": 4, "heading": "...", "body": "..."}},
+    {{"scene_id": 5, "heading": "...", "body": "..."}}
+  ]
+}}
+""".strip()
+
+
+def _apply_focused_editorial_rewrite_v66(package: VideoPackage, raw: dict[str, Any]) -> VideoPackage:
+    from . import local_llm
+
+    if raw.get("skip_reason"):
+        raise local_llm.LocalLLMError(f"Final editorial rewrite declined: {raw['skip_reason']}")
+    title = _clean(raw.get("title"))
+    narration = _clean(raw.get("narration"))
+    scenes_raw = raw.get("scenes")
+    if not title or not narration or not isinstance(scenes_raw, list) or len(scenes_raw) != 6:
+        raise local_llm.LocalLLMError("Final editorial rewrite returned an incomplete copy object")
+
+    rewritten: dict[int, tuple[str, str]] = {}
+    for item in scenes_raw:
+        if not isinstance(item, dict):
+            raise local_llm.LocalLLMError("Final editorial rewrite scene must be an object")
+        scene_id = item.get("scene_id")
+        if isinstance(scene_id, bool) or not isinstance(scene_id, int) or not 0 <= scene_id < 6:
+            raise local_llm.LocalLLMError("Final editorial rewrite returned an invalid scene_id")
+        if scene_id in rewritten:
+            raise local_llm.LocalLLMError("Final editorial rewrite duplicated a scene_id")
+        heading = _clean(item.get("heading"))
+        body = _clean(item.get("body"))
+        if not heading or not body:
+            raise local_llm.LocalLLMError("Final editorial rewrite returned an empty scene")
+        rewritten[scene_id] = (heading, body)
+    if set(rewritten) != set(range(6)):
+        raise local_llm.LocalLLMError("Final editorial rewrite must return scene ids 0 through 5 exactly once")
+
+    scenes = [
+        replace(scene, heading=rewritten[index][0], body=rewritten[index][1])
+        for index, scene in enumerate(package.scenes)
+    ]
+    candidate = replace(package, title=title, narration=narration, scenes=scenes)
+    if candidate.source_urls != package.source_urls or candidate.source_publishers != package.source_publishers:
+        raise local_llm.LocalLLMError("Final editorial rewrite changed immutable source metadata")
+    for before, after in zip(package.scenes, candidate.scenes, strict=True):
+        if before.source_index != after.source_index or before.visual != after.visual:
+            raise local_llm.LocalLLMError("Final editorial rewrite changed immutable scene evidence metadata")
+    return candidate
+
+
 def _validate_final_package(package: VideoPackage, sources: Sequence[SourceItem]) -> VideoPackage:
     from . import local_llm
+    from .production_content import _validate_publishable_content
 
     package = _repair_scene_actor(package, sources)
     failures = consumer_editorial_failures_v66(package)
     if failures:
         raise local_llm.LocalLLMError("Human editorial copy gate failed: " + "; ".join(failures))
+    _validate_publishable_content(package, list(sources))
     return package
+
+
+def repair_final_consumer_copy_v66(
+    settings: Any,
+    package: VideoPackage,
+    sources: Sequence[SourceItem],
+    *,
+    attempts: int = _MAX_FINAL_REWRITE_ATTEMPTS,
+) -> VideoPackage:
+    """Boundedly rewrite consumer copy using only selected evidence, then run frozen validators."""
+    from . import local_llm
+    from .production_editorial_boundary_v65 import stabilize_final_package_v65
+
+    candidate = _repair_scene_actor(package, sources)
+    failures = consumer_editorial_failures_v66(candidate)
+    if not failures:
+        return _validate_final_package(candidate, sources)
+
+    validation_error = "; ".join(failures)
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            raw = local_llm._chat(
+                settings,
+                _focused_editorial_prompt_v66(candidate, sources, validation_error),
+                attempts=1,
+            )
+            candidate = _apply_focused_editorial_rewrite_v66(candidate, raw)
+            candidate = stabilize_final_package_v65(candidate, sources)
+            candidate = _repair_scene_actor(candidate, sources)
+            return _validate_final_package(candidate, sources)
+        except local_llm.LocalLLMError as exc:
+            last_error = exc
+            validation_error = str(exc)
+            if attempt >= attempts:
+                break
+    raise local_llm.LocalLLMError(
+        f"Final human editorial rewrite failed after {attempts} bounded attempts: {last_error}"
+    ) from last_error
 
 
 def _install_consumer_copy_gate() -> None:
@@ -135,17 +294,19 @@ def _install_consumer_copy_gate() -> None:
     current_source_generate = source_attributed_llm.generate_package
 
     if not getattr(current_chat, "_agf_v66", False):
-        def chat_v66(settings: Any, prompt: str) -> dict[str, Any]:
+        def chat_v66(settings: Any, prompt: str, *, attempts: int = 3) -> dict[str, Any]:
             if _is_package_prompt(prompt) and _EDITORIAL_CONTRACT not in prompt:
                 prompt = prompt + "\n\n" + _EDITORIAL_CONTRACT
-            return current_chat(settings, prompt)
+            return current_chat(settings, prompt, attempts=attempts)
 
         chat_v66._agf_v66 = True  # type: ignore[attr-defined]
         local_llm._chat = chat_v66
 
     if not getattr(current_package_from_raw, "_agf_v66", False):
         def package_from_raw_v66(settings: Any, sources: list[SourceItem], raw: dict[str, Any]) -> VideoPackage:
-            return _validate_final_package(current_package_from_raw(settings, sources, raw), sources)
+            # Keep the initial package loop recoverable. Final audience-facing validation and the
+            # bounded focused rewrite are authoritative at the source-attributed package boundary.
+            return _repair_scene_actor(current_package_from_raw(settings, sources, raw), sources)
 
         package_from_raw_v66._agf_v66 = True  # type: ignore[attr-defined]
         local_llm._package_from_raw = package_from_raw_v66
@@ -159,7 +320,8 @@ def _install_consumer_copy_gate() -> None:
 
     if not getattr(current_source_generate, "_agf_v66", False):
         def source_generate_v66(settings: Any, sources: list[SourceItem], strategy: Any) -> VideoPackage:
-            return _validate_final_package(current_source_generate(settings, sources, strategy), sources)
+            package = current_source_generate(settings, sources, strategy)
+            return repair_final_consumer_copy_v66(settings, package, sources)
 
         source_generate_v66._agf_v66 = True  # type: ignore[attr-defined]
         source_attributed_llm.generate_package = source_generate_v66
