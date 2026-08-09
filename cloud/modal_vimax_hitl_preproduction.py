@@ -30,8 +30,8 @@ from cloud.modal_app import (
     secrets=factory_secrets,
     volumes={MODEL_CACHE: hf_cache, STATE_DIR: state_volume},
 )
-def prepare_vimax_keyframe_review() -> dict[str, object]:
-    """Run the real production stack only through machine-reviewed keyframes."""
+def prepare_vimax_keyframe_review(code_sha: str = "") -> dict[str, object]:
+    """Run exact production through machine-reviewed keyframes, then seal a human checkpoint."""
     os.environ["PUBLISH_ENABLED"] = "false"
     os.environ["VIMAX_PLANNER_ENABLED"] = "true"
     os.environ["VIDEO_RENDER_BACKEND"] = "remotion"
@@ -40,15 +40,18 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
     os.environ["WAN22_MAX_FRAME_NUM"] = "81"
     os.environ["WAN22_MODEL_CPU_OFFLOAD"] = "true"
     os.environ["HITL_KEYFRAME_PREVIEW_ONLY"] = "true"
+    os.environ["HITL_CODE_SHA"] = str(code_sha or "").strip()
     _prepare_runtime()
 
     from factory.production_caption_scale_v67 import install_production_caption_scale_v67
     from factory.production_editorial_boundary_v65 import install_production_editorial_boundary_v65
+    from factory.production_hitl_checkpoint_v71 import finalize_hitl_checkpoint_v71
     from factory.production_keyframe_human_gate_v63 import install_production_keyframe_human_gate_v63
     from factory.production_vimax_copy_integrity_v68 import install_production_vimax_copy_integrity_v68
     from factory.production_vimax_focused_copy_protocol_v69 import install_production_vimax_focused_copy_protocol_v69
     from factory.production_vimax_human_editorial_v66 import install_production_vimax_human_editorial_v66
     from factory.production_vimax_infrastructure_grammar_v62 import install_production_vimax_infrastructure_grammar_v62
+    from factory.production_vimax_topic_editorial_v70 import install_production_vimax_topic_editorial_v70
     from factory.production_vimax_unified_storyboard_v64 import install_production_vimax_unified_storyboard_v64
 
     install_production_editorial_boundary_v65()
@@ -58,6 +61,9 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
     install_production_vimax_human_editorial_v66()
     install_production_vimax_focused_copy_protocol_v69()
     install_production_vimax_copy_integrity_v68()
+    # v70 is final story-world authority: factual editorial copy, never generated scene.visual,
+    # decides whether infrastructure or professional-services grammar applies.
+    install_production_vimax_topic_editorial_v70()
     install_production_keyframe_human_gate_v63()
 
     from factory.canary import run_production_canary
@@ -68,16 +74,23 @@ def prepare_vimax_keyframe_review() -> dict[str, object]:
     hf_cache.commit()
 
     if result.get("error_type") == "HumanKeyframeReviewRequired":
+        artifact_path = str(result.get("artifact_path") or "")
+        checkpoint_dir = Path(STATE_DIR) / artifact_path
+        sealed = finalize_hitl_checkpoint_v71(checkpoint_dir, code_sha=code_sha)
+        state_volume.commit()
         return {
             "status": "awaiting_human_keyframe_review",
             "release_decision": "blocked_pending_human_keyframe_review",
             "canary_id": result.get("canary_id"),
-            "artifact_path": result.get("artifact_path"),
+            "artifact_path": artifact_path,
+            "approval_subject_sha256": sealed["approval_subject_sha256"],
+            "approved_code_sha": sealed["code_sha"],
+            "checkpoint_manifest": "hitl-checkpoint.json",
             "planning_backend": "vimax_script2video",
             "media_contract": "all_native_temporal_v55_after_human_keyframe_approval",
             "render_backend": "remotion_after_human_keyframe_approval",
-            "human_gate": "pre_wan_keyframe_review_v63",
-            "editorial_grammar": "human_editorial_v66",
+            "human_gate": "sealed_checkpoint_v71",
+            "editorial_grammar": "topic_aware_human_editorial_v70",
             "focused_copy_protocol": "narration_only_v69",
             "copy_integrity": "finished_punctuation_v68",
             "caption_geometry": "resolution_proportional_v67",
